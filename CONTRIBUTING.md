@@ -12,7 +12,10 @@ Thanks for your interest in contributing! This guide covers everything you need 
 - [Issue & PR Templates](#issue--pr-templates)
 - [Pull Request Process](#pull-request-process)
 - [Code Style](#code-style)
+- [Error Handling & Logging](#error-handling--logging)
 - [Running Tests](#running-tests)
+- [End-to-End (E2E) Tests](#end-to-end-e2e-tests)
+- [Coverage](#coverage)
 - [Translations](#translations)
 
 ---
@@ -26,9 +29,22 @@ Thanks for your interest in contributing! This guide covers everything you need 
    pnpm install
    ```
 
-2. Create a feature branch (see [Branch Naming](#branch-naming)).
+   > **pnpm is the only supported package manager.** This repo uses
+   > `pnpm-workspace.yaml` and the `packageManager` field in `package.json`
+   > enforces `pnpm@10.32.1`. Running `npm install` or `yarn install` will
+   > fail. Install pnpm with `npm install -g pnpm` or via
+   > [corepack](https://nodejs.org/api/corepack.html) (`corepack enable`).
+   > The canonical lockfile is `pnpm-lock.yaml` — never commit
+   > `package-lock.json` or `yarn.lock`.
 
-3. Make your changes, commit using the [convention below](#commit-message-convention), and open a PR.
+2. Install git hooks (runs automatically on `pnpm install`, but run manually if needed):
+   ```bash
+   pnpm prepare
+   ```
+
+3. Create a feature branch (see [Branch Naming](#branch-naming)).
+
+4. Make your changes, commit using the [convention below](#commit-message-convention), and open a PR.
 
 ---
 
@@ -62,7 +78,22 @@ This project uses **Conventional Commits** to power automated changelog generati
 
 ### Scopes (optional but encouraged)
 
-`api`, `app`, `contracts`, `deps`, `ci`, `docs`
+`api`, `app`, `contracts`, `deps`, `ci`, `docs`, `sdk`, `types`, `monitoring`, `mobile`
+
+### Enforcing with commitlint and husky
+
+This project uses [commitlint](https://commitlint.js.org/) to enforce the conventional commit format on every commit. The git hook is managed by [husky](https://typicode.github.io/husky/).
+
+- **Local hook**: A `commit-msg` hook is installed via `pnpm prepare` (runs automatically after `pnpm install`). It validates every commit message against the rules in `commitlint.config.js` before allowing the commit.
+- **Manual check**: Run `pnpm commitlint` to validate the last commit message, or `npx commitlint --edit <file>` to validate a specific message file.
+- **CI**: The `Commit Lint` workflow re-checks every commit in a pull request, so messages that bypass the local hook (`--no-verify`, commits made in the GitHub web UI, or a clone where `pnpm install` was never run) still fail the PR. It is a required check, not advisory.
+- **PR title**: Pull requests are squash merged, so the PR title becomes the commit subject on `main`. It is linted by the same rules and must follow the convention too.
+
+If a commit is rejected with a commitlint error, fix the message and re-commit:
+
+```bash
+git commit --amend -m "feat(sdk): description that follows the convention"
+```
 
 ### Examples
 
@@ -123,10 +154,11 @@ Fill in all relevant sections. The templates include checklists specific to the 
 ## Pull Request Process
 
 1. Ensure all CI checks pass (`pnpm test`, `pnpm build`, `cargo clippy`).
-2. Write a clear PR title following the commit convention (release-please uses it).
-3. Reference the related issue: `Closes #123`.
-4. Request a review from a maintainer.
-5. Squash-merge is preferred to keep history clean.
+2. Run the `packages/app` coverage check locally (see [Coverage](#coverage)) and paste the summary into the PR description.
+3. Write a clear PR title following the commit convention (release-please uses it).
+4. Reference the related issue: `Closes #123`.
+5. Request a review from a maintainer.
+6. Squash-merge is preferred to keep history clean.
 
 ---
 
@@ -137,6 +169,7 @@ Fill in all relevant sections. The templates include checklists specific to the 
 - 2-space indent, double quotes
 - Run `pnpm build` to catch type errors before pushing
 - Run `pnpm test` to ensure no regressions
+- All input validation schemas live in `src/validations/`. Do not create a separate `validators/` directory — add new Zod schemas as a file there and re-export them from `src/validations/index.ts`.
 
 ### Contracts (Rust)
 
@@ -149,56 +182,105 @@ See [packages/app/CONTRIBUTING.md](./packages/app/CONTRIBUTING.md) for frontend-
 
 ---
 
-## Database Migrations
+## Error Handling & Logging
 
-### Migration Safety Process
+Both packages follow a single written standard: **[docs/ERROR_HANDLING_AND_LOGGING.md](./docs/ERROR_HANDLING_AND_LOGGING.md)**.
+Read it before adding an error path or a log line. In short:
 
-When modifying the database schema:
+- **API:** throw `AppError` with an explicit `ErrorCode` and let the global `errorHandler` format the
+  response. Do not add new `try/catch` blocks in controllers that build their own JSON, and do not
+  add new callers of `handleError` or `sendError` — both drop `errorCode` and `traceId`.
+- **API logging:** use `createServiceLogger(name)` from `utils/logger.js`. Pass structured fields as
+  the first argument and the message as the second. No `console.*` in application code. 4xx logs at
+  `warn` or below; only 5xx logs at `error`.
+- **Correlation IDs:** the OpenTelemetry trace ID is the correlation ID. Read it with `getTraceId()`;
+  never invent a per-request UUID. Work that leaves the request context (queues, workers) must carry
+  `traceId` in its payload.
+- **App:** render `parseApiError(err).message` from `lib/errors.ts` — never a raw thrown message —
+  and branch on `code`/`retryable`, not on message text.
+- **Never log PII:** no bodies, headers, tokens, emails, or IP addresses.
 
-1. **Make schema changes** in `packages/api/prisma/schema.prisma`
-2. **Create a migration**: `npx prisma migrate dev --name <descriptive-name>`
-3. **For destructive migrations** (DROP COLUMN, DROP TABLE, ALTER COLUMN):
-   - Add the `migration:destructive` label to your PR
-   - Request explicit review from a maintainer
-   - Include justification in the PR description
-4. **CI will verify** that destructive migrations are properly labeled
-
-### Destructive Operations Require Manual Approval
-
-The CI pipeline will flag any migration containing:
-- `DROP COLUMN`
-- `DROP TABLE`
-- `ALTER COLUMN`
-
-These changes require the `migration:destructive` label and manual approval before merging.
+The document ends with a [review checklist](./docs/ERROR_HANDLING_AND_LOGGING.md#review-checklist);
+reviewers are expected to use it. `packages/api/src/__tests__/error-logging-conventions.test.ts`
+fails the build if the document and the code disagree.
 
 ---
 
 ## Running Tests
 
 ```bash
-# API tests
-cd packages/api
-pnpm test
+pnpm test          # run all package test suites
+pnpm test --filter api   # run a single package
+```
 
-# Contract tests
-cd packages/contracts
-cargo test
+---
 
-# App
-cd packages/app
-pnpm test
+## End-to-End (E2E) Tests
+
+The primary revenue-critical flow — **post job → hire worker → fund escrow → release payment** — is
+covered by a browser-driven [Playwright](https://playwright.dev/) suite in `packages/app/e2e/`.
+The suite drives the real `packages/app` UI against a running `packages/api` and its dependencies.
+
+### Prerequisites
+
+- Docker (for `docker-compose.test.yml`)
+- Node.js and `pnpm`
+- Playwright browsers installed once per machine:
+  ```bash
+  pnpm --filter app exec playwright install --with-deps
+  ```
+
+### Run the suite locally (single command)
+
+From the repository root:
+
+```bash
+pnpm test:e2e
+```
+
+This command stands up the dependencies defined in `docker-compose.test.yml`, waits for the API to
+become healthy, runs the Playwright suite against the local stack, and tears the stack down again.
+
+### Useful variants
+
+```bash
+pnpm test:e2e -- --ui          # interactive Playwright UI mode
+pnpm test:e2e -- --headed      # watch the browser run
+pnpm test:e2e -- job-payment   # run a single spec by name
+```
+
+### What the happy-path spec covers
+
+`packages/app/e2e/job-payment.spec.ts` walks the full flow end to end:
+
+1. A client signs in and posts a job.
+2. The client hires a worker for that job.
+3. The client funds escrow for the agreed amount.
+4. The client releases payment once the work is marked complete.
+5. The test asserts the job and payment reach their terminal success states.
+
+If the suite fails, the Playwright HTML report is written to `packages/app/playwright-report/`.
+
+Each `components/ui` primitive is snapshotted in its key states — **default**, **hover**,
+**disabled**, and **error** — so a regression in any single state fails the run.
+
+## Coverage
+
+`packages/app` enforces an **85% line-coverage target** configured in the app's test tooling
+(`packages/app/vitest.config.ts`), with per-directory reporting enabled so gaps are visible by area.
+
+### Required local pre-merge check
+
+Before opening or updating a PR that touches `packages/app`, run the coverage check locally and
+paste the summary into the PR description:
+
+```bash
+pnpm --filter app test:coverage
 ```
 
 ---
 
 ## Translations
 
-See [docs/i18n-translations.md](./docs/i18n-translations.md) for contributing translations to the app UI and README files. This includes:
-
-- Adding a new language to the Next.js frontend (message JSON files)
-- Translating README files to new languages
-- Keeping translations in sync with the English source
-- Validating translation completeness
-
-Translation PRs should use the `i18n:` commit type and reference the language being added.
+See [packages/app/CONTRIBUTING.md](./packages/app/CONTRIBUTING.md) for translation and localization
+conventions.

@@ -1,5 +1,6 @@
-import { db } from '../db.js'
-import { logger } from '../config/logger.js'
+import type { Prisma } from '@prisma/client'
+import { db } from '@/db.js'
+import { logger } from '@/config/logger.js'
 
 export interface AuditOptions {
   userId?: string
@@ -30,7 +31,7 @@ export async function queryLogs(opts: {
 }) {
   const { userId, action, resource, from, to, page = 1, limit = 50 } = opts
 
-  const where: any = {
+  const where: Prisma.AuditLogWhereInput = {
     ...(userId ? { userId } : {}),
     ...(action ? { action: { contains: action, mode: 'insensitive' } } : {}),
     ...(resource ? { resource } : {}),
