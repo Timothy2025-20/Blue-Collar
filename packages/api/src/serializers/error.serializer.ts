@@ -1,6 +1,7 @@
-import { AppError, ErrorCode } from '../utils/AppError.js'
-import { getTraceId } from '../monitoring/tracing.js'
-import { ErrorMessages, HttpStatus } from '../constants/index.js'
+import { AppError, ErrorCode } from '@/utils/app-error.js'
+import { getTraceId } from '@/monitoring/tracing.js'
+import { ErrorMessages, HttpStatus } from '@/constants/index.js'
+import { config } from '@/config/config.js'
 
 export interface ErrorResponse {
   status: 'error'
@@ -18,13 +19,11 @@ interface PrismaClientKnownRequestError {
 }
 
 function isPrismaError(err: unknown): err is PrismaClientKnownRequestError {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    typeof (err as Record<string, unknown>).code === 'string' &&
-    (err as Record<string, unknown>).code?.toString().startsWith('P')
-  )
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return false
+  }
+  const code = (err as Record<string, unknown>).code
+  return typeof code === 'string' && code.startsWith('P')
 }
 
 function mapPrismaError(err: PrismaClientKnownRequestError): { statusCode: number; message: string; errorCode: ErrorCode } {
@@ -57,12 +56,16 @@ export function serializeError(err: unknown): SerializedError {
   }
 
   if (err instanceof AppError && err.isOperational) {
+    // PII SAFETY: operational errors only expose the error message and code — no user data
     return {
       statusCode: err.statusCode,
       body: { status: 'error', message: err.message, code: err.statusCode, errorCode: err.errorCode, traceId },
     }
   }
 
+  // PII SAFETY: unexpected errors return a generic message without any
+  // request context, user data, or internal details. Stack traces are
+  // only included in development and are logged server-side only.
   const error = err instanceof Error ? err : new Error(String(err))
   const body: ErrorResponse = {
     status: 'error',
@@ -70,7 +73,7 @@ export function serializeError(err: unknown): SerializedError {
     code: HttpStatus.INTERNAL_SERVER_ERROR,
     errorCode: ErrorCode.INTERNAL_ERROR,
     traceId,
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack, originalMessage: error.message }),
+    ...(config.env === 'development' && { stack: error.stack, originalMessage: error.message }),
   }
   return { statusCode: HttpStatus.INTERNAL_SERVER_ERROR, body }
 }

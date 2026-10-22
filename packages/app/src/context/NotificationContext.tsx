@@ -22,6 +22,7 @@ interface NotificationContextValue {
   loading: boolean;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
+  clearAll: () => void;
   refresh: () => Promise<void>;
 }
 
@@ -35,10 +36,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const [notifRes, countRes] = await Promise.all([
-        getNotifications({ limit: "50" }),
+        getNotifications({ limit: 50 }),
         getUnreadNotificationCount(),
       ]);
-      setNotifications(notifRes.data);
+      setNotifications(notifRes.data ?? []);
       setUnreadCount(countRes.data.count);
     } catch {
       // silently fail
@@ -73,6 +74,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const clearAll = useCallback(() => {
+    setNotifications([]);
+    setUnreadCount(0);
+  }, []);
+
   return (
     <NotificationContext.Provider
       value={{
@@ -81,6 +87,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
         loading,
         markRead,
         markAllRead,
+        clearAll,
         refresh,
       }}
     >

@@ -4,19 +4,42 @@ import Link from "next/link";
 import Image from "next/image";
 import { MessageSquare } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
+import Skeleton from "@/components/Skeleton";
 import type { Conversation } from "@/types";
+import { useTranslations } from "next-intl";
 
 interface Props {
   conversations: Conversation[];
   currentUserId: string;
+  /** When true renders skeleton rows instead of empty state or list (#1203). */
+  loading?: boolean;
 }
 
-export function MessagesPreview({ conversations, currentUserId }: Props) {
+export function MessagesPreview({ conversations, currentUserId, loading }: Props) {
+  const t = useTranslations("componentText");
+  // ── Loading state (#1203) ──────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-3 py-4" aria-busy="true" aria-label={t("loadingMessages")}>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 px-1">
+            <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+            <div className="flex flex-col gap-1.5 flex-1">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Empty state (#1203) ────────────────────────────────────────────────────
   if (conversations.length === 0) {
     return (
       <div className="py-10 text-center">
         <MessageSquare size={32} className="mx-auto mb-2 text-gray-300" />
-        <p className="text-sm text-gray-400">No messages yet.</p>
+        <p className="text-sm text-gray-400">{t("noMessagesYet")}</p>
       </div>
     );
   }
@@ -49,7 +72,7 @@ export function MessagesPreview({ conversations, currentUserId }: Props) {
               )}
               <div className="flex-1 min-w-0">
                 <p className={cn("text-sm truncate", isUnread ? "font-semibold text-gray-900 dark:text-gray-100" : "font-medium text-gray-700 dark:text-gray-300")}>
-                  {other ? `${other.user.firstName} ${other.user.lastName}` : conv.subject ?? "Conversation"}
+                  {other ? `${other.user.firstName} ${other.user.lastName}` : conv.subject ?? t("messages")}
                 </p>
                 {lastMsg && (
                   <p className="truncate text-xs text-gray-400">{lastMsg.body}</p>

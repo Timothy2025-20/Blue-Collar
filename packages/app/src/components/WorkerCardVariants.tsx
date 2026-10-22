@@ -7,6 +7,7 @@ import type { Worker } from '@/types'
 import BookmarkButton from './BookmarkButton'
 import StarRating from './StarRating'
 import { useCompare } from '@/context/CompareContext'
+import { useTranslations } from 'next-intl'
 
 type CardVariant = 'compact' | 'standard' | 'featured'
 
@@ -16,6 +17,7 @@ interface WorkerCardVariantProps {
 }
 
 export function CompactWorkerCard({ worker }: WorkerCardVariantProps) {
+  const t = useTranslations('workerCard')
   const { toggle, isSelected, isFull } = useCompare()
   const checked = isSelected(worker.id)
 
@@ -50,6 +52,7 @@ export function CompactWorkerCard({ worker }: WorkerCardVariantProps) {
               alt={worker.name}
               width={40}
               height={40}
+              sizes="40px"
               className="h-10 w-10 rounded-full object-cover ring-1 ring-blue-100"
             />
           ) : (
@@ -83,6 +86,7 @@ export function CompactWorkerCard({ worker }: WorkerCardVariantProps) {
 }
 
 export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
+  const t = useTranslations('workerCard')
   const { toggle, isSelected, isFull } = useCompare()
   const checked = isSelected(worker.id)
 
@@ -107,7 +111,7 @@ export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
           className="h-4 w-4 rounded border-gray-300 accent-blue-600 cursor-pointer disabled:cursor-not-allowed"
           aria-label={`Compare ${worker.name}`}
         />
-        <span className="text-xs text-gray-500 select-none">Compare</span>
+        <span className="text-xs text-gray-500 select-none">{t('compare')}</span>
       </label>
 
       <Link href={`/workers/${worker.id}`} className="flex flex-col gap-4">
@@ -118,6 +122,7 @@ export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
               alt={worker.name}
               width={56}
               height={56}
+              sizes="56px"
               className="h-14 w-14 rounded-full object-cover ring-2 ring-blue-100"
             />
           ) : (
@@ -130,7 +135,7 @@ export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
             <div className="flex items-center gap-1.5 font-semibold text-gray-800 truncate">
               <span className="truncate">{worker.name}</span>
               {worker.isVerified && (
-                <BadgeCheck size={16} className="shrink-0 text-blue-500" aria-label="Verified" />
+                <BadgeCheck size={16} className="shrink-0 text-blue-500" aria-label={t('verified')} />
               )}
             </div>
             <span className="mt-0.5 inline-block rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
@@ -163,7 +168,7 @@ export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
 
         <div className="mt-auto pt-1">
           <span className="inline-block w-full rounded-md border border-blue-600 py-1.5 text-center text-sm font-medium text-blue-600 transition-colors group-hover:bg-blue-600 group-hover:text-white">
-            View Profile
+            {t('viewProfile')}
           </span>
         </div>
       </Link>
@@ -172,6 +177,7 @@ export function StandardWorkerCard({ worker }: WorkerCardVariantProps) {
 }
 
 export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
+  const t = useTranslations('workerCard')
   const initials = worker.name
     .split(' ')
     .map((n) => n[0])
@@ -183,10 +189,10 @@ export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
     <Link href={`/workers/${worker.id}`}>
       <div className="relative group flex flex-col gap-4 rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-white p-6 shadow-md transition-all duration-200 hover:shadow-xl hover:border-blue-400">
         {/* Status badge */}
-        {worker.isActive && (
+        {worker.isActive !== false && (
           <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-medium">
             <div className="h-2 w-2 rounded-full bg-green-600" />
-            Active
+            {t('active')}
           </div>
         )}
 
@@ -198,6 +204,7 @@ export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
               alt={worker.name}
               width={80}
               height={80}
+              sizes="80px"
               className="h-20 w-20 rounded-full object-cover ring-4 ring-white shadow-md"
             />
           ) : (
@@ -210,7 +217,7 @@ export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
             <div className="flex items-center gap-2">
               <h3 className="text-lg font-bold text-gray-900 truncate">{worker.name}</h3>
               {worker.isVerified && (
-                <BadgeCheck size={20} className="shrink-0 text-blue-600" aria-label="Verified" />
+                <BadgeCheck size={20} className="shrink-0 text-blue-600" aria-label={t('verified')} />
               )}
             </div>
 
@@ -230,7 +237,7 @@ export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
                   ))}
                 </div>
                 <span className="text-sm font-semibold text-gray-700">
-                  {worker.averageRating.toFixed(1)} ({worker.reviewCount} reviews)
+                  {worker.averageRating.toFixed(1)} ({worker.reviewCount} {t('reviews')})
                 </span>
               </div>
             )}
@@ -253,7 +260,7 @@ export function FeaturedWorkerCard({ worker }: WorkerCardVariantProps) {
         {/* CTA */}
         <div className="mt-2 pt-4 border-t border-blue-100">
           <span className="inline-block w-full rounded-lg bg-blue-600 py-2.5 text-center text-sm font-semibold text-white transition-colors group-hover:bg-blue-700">
-            View Full Profile
+            {t('viewFullProfile')}
           </span>
         </div>
       </div>

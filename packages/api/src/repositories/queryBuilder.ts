@@ -11,14 +11,14 @@ export interface PaginationOpts {
 /**
  * Common filtering options
  */
-export interface FilterOpts {
+interface FilterOpts {
   where?: Prisma.UserWhereInput | Prisma.WorkerWhereInput
 }
 
 /**
  * Common sorting options
  */
-export interface SortOpts {
+interface SortOpts {
   orderBy?: Prisma.UserOrderByWithRelationInput | Prisma.WorkerOrderByWithRelationInput
 }
 
@@ -49,7 +49,7 @@ export class QueryBuilder {
     sortOrder: 'asc' | 'desc' = 'desc',
   ): Prisma.UserOrderByWithRelationInput | Prisma.WorkerOrderByWithRelationInput {
     const validFields = ['createdAt', 'updatedAt', 'name', 'rating']
-    const field = validFields.includes(sortBy ?? '') ? sortBy : 'createdAt'
+    const field = validFields.includes(sortBy ?? '') ? (sortBy ?? 'createdAt') : 'createdAt'
     return { [field]: sortOrder }
   }
 

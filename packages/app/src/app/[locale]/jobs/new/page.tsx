@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Loader2, X, Plus } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { createJob, getCategories } from "@/lib/api";
+import { getCategories } from "@/lib/api";
+import { createJob } from "@/lib/api/jobs";
 import type { Category } from "@/types";
 
 export default function NewJobPage() {
@@ -28,7 +29,7 @@ export default function NewJobPage() {
 
   useEffect(() => {
     if (!user) { router.replace("/auth/login"); return; }
-    getCategories().then((r) => setCategories(r.data)).catch(() => {});
+    getCategories().then((r) => setCategories(r.data ?? [])).catch(() => {});
   }, [user, router]);
 
   const addSkill = () => {

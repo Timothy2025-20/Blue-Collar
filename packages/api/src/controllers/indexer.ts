@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
-import * as indexerService from '../services/indexer.service.js'
-import { catchAsync } from '../utils/catchAsync.js'
+import * as indexerService from '@/services/indexer.service.js'
+import { catchAsync } from '@/utils/catchAsync.js'
+import { AppError, ErrorCode } from '@/utils/app-error.js'
 
 /**
  * GET /api/events?contractId=...&eventName=...&limit=50&offset=0
@@ -10,11 +11,7 @@ export const queryEvents = catchAsync(async (req: Request, res: Response) => {
   const { contractId, eventName, limit = '50', offset = '0' } = req.query
 
   if (!contractId) {
-    return res.status(400).json({
-      status: 'error',
-      code: 400,
-      message: 'contractId is required',
-    })
+    throw new AppError('contractId is required', 400, true, ErrorCode.VALIDATION_ERROR)
   }
 
   const result = await indexerService.queryEvents(
@@ -38,7 +35,7 @@ export const queryEvents = catchAsync(async (req: Request, res: Response) => {
 export const getWorkerRegistrations = catchAsync(async (req: Request, res: Response) => {
   const { contractId, ownerAddress } = req.params
 
-  const events = await indexerService.getWorkerRegistrationEvents(contractId, ownerAddress)
+  const events = await indexerService.getWorkerRegistrationEvents(contractId!, ownerAddress!)
 
   res.json({
     status: 'success',
@@ -54,7 +51,7 @@ export const getWorkerRegistrations = catchAsync(async (req: Request, res: Respo
 export const getCursor = catchAsync(async (req: Request, res: Response) => {
   const { contractId } = req.params
 
-  const cursor = await indexerService.getOrCreateCursor(contractId)
+  const cursor = await indexerService.getOrCreateCursor(contractId!)
 
   res.json({
     status: 'success',
