@@ -1,41 +1,13 @@
 "use client";
 
+import LoadingState from "@/components/LoadingState";
 import { useEffect, useState } from "react";
-import { Bell, Check, CheckCheck, Trash2, ArrowLeft } from "lucide-react";
+import { Bell, CheckCheck, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useNotifications } from "@/context/NotificationContext";
 import { deleteNotification } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import type { NotificationType as NType } from "@/types";
-type NotificationType = NType;
-
-const TYPE_STYLES: Record<NotificationType, string> = {
-  tip: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
-  review: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-  contact: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-  system: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
-  message: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-};
-
-const TYPE_LABELS: Record<NotificationType, string> = {
-  tip: "Tip",
-  review: "Review",
-  contact: "Contact",
-  system: "System",
-  message: "Message",
-};
-
-function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
+import { NotificationItem } from "@/components/notifications/NotificationItem";
+import { NotificationEmptyState } from "@/components/notifications/NotificationEmptyState";
 
 export default function NotificationCentrePage() {
   const { notifications, unreadCount, markRead, markAllRead, refresh, loading } =
@@ -93,77 +65,19 @@ export default function NotificationCentrePage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-20">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-        </div>
+        <LoadingState variant="list" />
       ) : notifications.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-20 text-gray-400">
-          <Bell size={40} className="opacity-30" />
-          <p className="text-sm">No notifications yet</p>
-        </div>
+        <NotificationEmptyState icon={Bell} message="No notifications yet" />
       ) : (
         <div className="divide-y rounded-xl border dark:divide-gray-800 dark:border-gray-800">
           {notifications.map((n) => (
-            <div
+            <NotificationItem
               key={n.id}
-              className={cn(
-                "flex items-start gap-4 px-5 py-4 transition-colors",
-                !n.read && "bg-blue-50/60 dark:bg-blue-950/30"
-              )}
-            >
-              <span
-                className={cn(
-                  "mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                  TYPE_STYLES[n.type as NotificationType]
-                )}
-              >
-                {TYPE_LABELS[n.type as NotificationType]}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    {n.href ? (
-                      <Link
-                        href={n.href}
-                        onClick={() => markRead(n.id)}
-                        className="text-sm font-medium text-gray-900 hover:text-blue-600 dark:text-gray-100 dark:hover:text-blue-400"
-                      >
-                        {n.title}
-                      </Link>
-                    ) : (
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {n.title}
-                      </p>
-                    )}
-                    {n.message && (
-                      <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                        {n.message}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {!n.read && (
-                      <button
-                        onClick={() => markRead(n.id)}
-                        className="flex h-7 w-7 items-center justify-center rounded text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 transition-colors"
-                        title="Mark as read"
-                      >
-                        <Check size={14} />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDelete(n.id)}
-                      disabled={deleting.has(n.id)}
-                      className="flex h-7 w-7 items-center justify-center rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-                      title="Delete"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-                <p className="mt-1 text-xs text-gray-400">{timeAgo(n.createdAt)}</p>
-              </div>
-            </div>
+              notification={n}
+              deleting={deleting.has(n.id)}
+              onMarkRead={markRead}
+              onDelete={handleDelete}
+            />
           ))}
         </div>
       )}

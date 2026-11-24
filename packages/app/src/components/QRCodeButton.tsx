@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { QrCode } from "lucide-react";
 import QRCodeModal from "./QRCodeModal";
+import { useModal } from "@/context/ModalContext";
+import { useTranslations } from "next-intl";
 
 interface QRCodeButtonProps {
   workerName: string;
@@ -10,26 +11,35 @@ interface QRCodeButtonProps {
 }
 
 export default function QRCodeButton({ workerName, workerId }: QRCodeButtonProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const t = useTranslations("workerCard");
+  const { openModal, closeModal } = useModal();
+  const modalId = `qr-${workerId}`;
 
   const profileUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/workers/${workerId}`;
 
+  const handleOpen = () => {
+    openModal({
+      id: modalId,
+      ariaLabel: `Share ${workerName}'s profile via QR code`,
+      content: (
+        <QRCodeModal
+          isOpen
+          onClose={() => closeModal(modalId)}
+          workerName={workerName}
+          profileUrl={profileUrl}
+        />
+      ),
+    });
+  };
+
   return (
-    <>
-      <button
-        onClick={() => setIsOpen(true)}
-        className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-        aria-label="Share via QR code"
-        title="Share via QR code"
-      >
-        <QrCode size={18} className="text-gray-600" />
-      </button>
-      <QRCodeModal
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        workerName={workerName}
-        profileUrl={profileUrl}
-      />
-    </>
+    <button
+      onClick={handleOpen}
+      className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+      aria-label={t("shareQr", { name: workerName })}
+      title={t("shareQr", { name: workerName })}
+    >
+      <QrCode size={18} className="text-gray-600" />
+    </button>
   );
 }

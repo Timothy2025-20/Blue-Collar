@@ -196,6 +196,7 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | `update_availability(id, caller, is_available, expires_at)` | `caller.require_auth()` | `id: Symbol, caller: Address, is_available: bool, expires_at: u64` | — | Set availability (owner only). |
 | `get_availability(worker_id)` | — | `worker_id: Symbol` | `Option<AvailabilityStatus>` | Get availability. |
 | `batch_register(curator, ids, owners, names, categories, location_hashes, contact_hashes)` | `curator.require_auth()` | (parallel vecs) | `Vec<BatchRegisterResult>` | Register up to 20 workers. Partial success. |
+| `batch_toggle(caller, ids)` | `caller.require_auth()`, must be curator | `caller: Address, ids: Vec<Symbol>` (max `MAX_BATCH_SIZE`) | `Vec<(Symbol, bool)>` | Toggle `is_active` for multiple workers. Skips ids that don't exist (partial success). |
 | `stake(caller, worker_id, token_addr, amount)` | `caller.require_auth()` | `caller: Address, worker_id: Symbol, token_addr: Address, amount: i128` | — | Stake tokens for visibility (owner only). |
 | `request_unstake(caller, worker_id)` | `caller.require_auth()` | `caller: Address, worker_id: Symbol` | — | Start 7-day unstake cooldown. |
 | `unstake(caller, worker_id)` | `caller.require_auth()` | `caller: Address, worker_id: Symbol` | — | Finalise unstake after cooldown. Returns tokens + rewards. |
@@ -217,6 +218,32 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | `upgrade(new_wasm_hash)` | `ROLE_UPGRADER` | `new_wasm_hash: BytesN<32>` | — | Immediate upgrade (no timelock). |
 | `migrate(admin, expected_version)` | `ROLE_ADMIN` | `admin: Address, expected_version: u32` | — | Run version-specific storage migration. |
 | `get_schema_version()` | — | — | `u32` | Get current schema version. |
+
+### Certification & Verification Functions
+
+Two related but distinct sub-APIs, both curator/admin-gated writes with public reads.
+Certifications (`registry/src/certifications.rs`) are individually revocable records
+with their own lifecycle; certified skills are simpler tag-like entries keyed by skill
+symbol, and verification level is a single per-worker status flag. See
+[CERTIFICATION_TRACKING.md](../packages/contracts/CERTIFICATION_TRACKING.md) for the
+full `Certification` struct, storage keys, and event details for the first group.
+
+| Function | Auth | Parameters | Returns | Description |
+|---|---|---|---|---|
+| `add_certification(caller, worker_id, cert_id, issuer, name, issued_at, expires_at)` | curator/admin | `caller: Address, worker_id: Symbol, cert_id: Symbol, issuer: String, name: String, issued_at: u64, expires_at: u64` | — | Add a certification record. See CERTIFICATION_TRACKING.md. |
+| `remove_certification(caller, worker_id, cert_id)` | curator/admin | `caller: Address, worker_id: Symbol, cert_id: Symbol` | — | Remove a certification record. |
+| `verify_certification(caller, cert_id)` | curator/admin | `caller: Address, cert_id: Symbol` | — | Mark a certification as verified. |
+| `get_certification(cert_id)` | — | `cert_id: Symbol` | `Option<Certification>` | Get a single certification. |
+| `get_certification_count(worker_id)` | — | `worker_id: Symbol` | `u32` | Count of certifications for a worker. |
+| `get_worker_certifications(worker_id)` | — | `worker_id: Symbol` | `Vec<Certification>` | All certifications for a worker. |
+| `get_valid_certifications(worker_id)` | — | `worker_id: Symbol` | `Vec<Certification>` | Non-expired certifications for a worker. |
+| `get_verified_certification_count(worker_id)` | — | `worker_id: Symbol` | `u32` | Count of verified certifications for a worker. |
+| `is_certification_valid(cert_id)` | — | `cert_id: Symbol` | `bool` | Whether a certification exists and hasn't expired. |
+| `set_verification_level(caller, worker_id, level)` | `ROLE_CURATOR_MGR` or `ROLE_ADMIN` | `caller: Address, worker_id: Symbol, level: VerificationLevel` | — | Set a worker's verification level. Panics `"Worker not found"` if unknown. |
+| `get_verification_level(worker_id)` | — | `worker_id: Symbol` | `VerificationLevel` | Get a worker's verification level; `VerificationLevel::None` if unset. |
+| `add_certified_skill(caller, worker_id, skill, expires_at)` | `ROLE_CURATOR_MGR` or `ROLE_ADMIN` | `caller: Address, worker_id: Symbol, skill: Symbol, expires_at: u64` | — | Add/replace a certified skill entry (`expires_at: 0` = no expiry). |
+| `revoke_certified_skill(caller, worker_id, skill)` | `ROLE_CURATOR_MGR` or `ROLE_ADMIN` | `caller: Address, worker_id: Symbol, skill: Symbol` | — | Remove a certified skill. Panics `"Skill not found"` if absent. |
+| `get_certified_skills(worker_id)` | — | `worker_id: Symbol` | `Vec<CertifiedSkill>` | All certified skills for a worker. |
 
 ---
 
@@ -284,6 +311,7 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | `tip(from, to, token_addr, amount)` | `from.require_auth()` | `from: Address, to: Address, token_addr: Address, amount: i128` | — | Transfer `amount` minus `fee_bps` to `to`. Fee to `fee_recipient`. |
 | `create_escrow(id, from, to, token_addr, amount, expiry)` | `from.require_auth()` | `id: Symbol, from: Address, to: Address, token_addr: Address, amount: i128, expiry: u64` | — | Lock tokens in escrow. |
 | `release_escrow(id, caller)` | `caller.require_auth()` | `id: Symbol, caller: Address` | — | Release funds to `to`. Callable by `from` or `to`. |
+| `batch_release_escrow(caller, ids)` | `caller.require_auth()` | `caller: Address, ids: Vec<Symbol>` (max 20) | `Vec<Symbol>` | Release multiple escrows in one call. Skips already-released/cancelled or unauthorised ids (partial success); returns the ids that succeeded. |
 | `cancel_escrow(id, caller)` | `caller.require_auth()` | `id: Symbol, caller: Address` | — | Refund `from` after `expiry`. Payer only. |
 | `cancel_expired_escrow(id)` | — | `id: Symbol` | — | Anyone can cancel an expired escrow. |
 | `get_escrow(id)` | — | `id: Symbol` | `Option<Escrow>` | Get escrow details. |
@@ -320,7 +348,9 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 ## Dispute Contract
 
 **Source**: `packages/contracts/contracts/dispute/src/lib.rs`
-**Deployment**: Stellar Soroban, handles dispute filing, evidence submission, and arbitration.
+**Deployment**: Stellar Soroban. Lifecycle: `file_dispute` (open) → `submit_evidence`
+(evidence) → `decide` (arbitrator records outcome, no transfer yet) → `settle` (anyone
+executes the transfer per the recorded decision).
 
 ### Storage Map
 
@@ -339,17 +369,18 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | Field | Type | Description |
 |---|---|---|
 | `id` | `Symbol` | Unique dispute identifier |
-| `disputer` | `Address` | Party that filed the dispute |
+| `disputer` | `Address` | Party that filed the dispute and locked the tokens |
 | `respondent` | `Address` | Party being disputed against |
-| `token` | `Address` | Token contract address |
-| `amount` | `i128` | Disputed amount |
-| `status` | `DisputeStatus` | `Filed` / `EvidenceSubmitted` / `Resolved` / `Cancelled` |
-| `outcome` | `DisputeOutcome` | `RefundPayer` / `ReleaseWorker` / `PartialRefund` / `Unresolved` |
-| `arbitrator` | `Option<Address>` | Arbitrator who resolved |
-| `filed_at` | `u64` | Filing timestamp |
-| `resolved_at` | `Option<u64>` | Resolution timestamp |
-| `disputer_evidence_hash` | `Option<String>` | SHA-256 of disputer's evidence |
-| `respondent_evidence_hash` | `Option<String>` | SHA-256 of respondent's evidence |
+| `token` | `Address` | Token contract used for the locked amount |
+| `amount` | `i128` | Total amount locked in this contract |
+| `status` | `DisputeStatus` | `Open` / `Evidence` / `Decided` / `Settled` |
+| `outcome` | `DisputeOutcome` | `RefundDisputer` / `ReleaseRespondent` / `Split`; placeholder `RefundDisputer` until `status >= Decided` |
+| `split_bps` | `u32` | Respondent's share in basis points (0–10,000); only meaningful for `Split` |
+| `arbitrator` | `Option<Address>` | Arbitrator address once decided |
+| `filed_at` | `u64` | Unix timestamp when filed |
+| `settled_at` | `u64` | Unix timestamp when settled (`0` until settled) |
+| `disputer_evidence` | `Option<String>` | Off-chain evidence hash submitted by the disputer |
+| `respondent_evidence` | `Option<String>` | Off-chain evidence hash submitted by the respondent |
 
 ### Public Functions
 
@@ -357,11 +388,16 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 |---|---|---|---|---|
 | `initialize(admin)` | — | `admin: Address` | — | Init contract. One-time. |
 | `get_admin()` | — | — | `Address` | Get admin. |
-| `add_arbitrator(admin, arbitrator)` | `admin.require_auth()` | `admin: Address, arbitrator: Address` | — | Add approved arbitrator. |
-| `remove_arbitrator(admin, arbitrator)` | `admin.require_auth()` | `admin: Address, arbitrator: Address` | — | Remove arbitrator. |
-| `file_dispute(id, disputer, respondent, token, amount, evidence_hash)` | `disputer.require_auth()` | `id: Symbol, disputer: Address, respondent: Address, token: Address, amount: i128, evidence_hash: String` | — | File a dispute. |
-| `submit_evidence(dispute_id, respondent, evidence_hash)` | `respondent.require_auth()` | `dispute_id: Symbol, respondent: Address, evidence_hash: String` | — | Submit counter-evidence. |
-| `resolve_dispute(dispute_id, arbitrator, outcome)` | `arbitrator.require_auth()` | `dispute_id: Symbol, arbitrator: Address, outcome: DisputeOutcome` | — | Resolve dispute. |
+| `version()` | — | — | `u32` | Get the event schema version. |
+| `pause(admin)` | `admin.require_auth()` | `admin: Address` | — | Pause the contract. |
+| `unpause(admin)` | `admin.require_auth()` | `admin: Address` | — | Unpause the contract. |
+| `add_arbitrator(admin, arbitrator)` | `admin.require_auth()` | `admin: Address, arbitrator: Address` | — | Add an approved arbitrator (idempotent). |
+| `remove_arbitrator(admin, arbitrator)` | `admin.require_auth()` | `admin: Address, arbitrator: Address` | — | Remove an approved arbitrator. |
+| `list_arbitrators()` | — | — | `Vec<Address>` | List all approved arbitrators. |
+| `file_dispute(id, disputer, respondent, token, amount, evidence_hash)` | `disputer.require_auth()` | `id: Symbol, disputer: Address, respondent: Address, token: Address, amount: i128, evidence_hash: String` | — | File a dispute; locks `amount` tokens in the contract. |
+| `submit_evidence(dispute_id, caller, evidence_hash)` | `caller.require_auth()` | `dispute_id: Symbol, caller: Address, evidence_hash: String` | — | Attach an evidence hash. `caller` must be the disputer or respondent; dispute must be `Open` or `Evidence`. |
+| `decide(dispute_id, arbitrator, outcome, split_bps)` | `arbitrator.require_auth()` | `dispute_id: Symbol, arbitrator: Address, outcome: DisputeOutcome, split_bps: u32` | — | Record an arbitrator decision (no transfer yet). `arbitrator` must be in the approved list; dispute must be `Open` or `Evidence`. |
+| `settle(dispute_id)` | — (callable by anyone) | `dispute_id: Symbol` | — | Execute the token transfer per the recorded decision. Dispute must be `Decided`. |
 | `get_dispute(dispute_id)` | — | `dispute_id: Symbol` | `Option<Dispute>` | Get dispute details. |
 | `list_disputes()` | — | — | `Vec<Symbol>` | List all dispute IDs. |
 | `upgrade(admin, new_wasm_hash)` | `admin.require_auth()` | `admin: Address, new_wasm_hash: BytesN<32>` | — | Upgrade contract WASM. |
@@ -431,7 +467,7 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | `Admin` | `Address` | Instance | Admin address |
 | `Paused` | `bool` | Instance | Pause flag |
 | `RoleMembers(Symbol)` | `Vec<Address>` | Persistent | Role member lists |
-| `PoolMembers` | `Vec<PoolMember>` | Persistent | Pool member list |
+| `PoolMembers` | `Map<Address, PoolMember>` | Persistent | Pool members, keyed by member address |
 | `PoolStats(Address)` | `PoolStats` | Persistent | Pool statistics per token |
 | `Claims` | `Vec<Symbol>` | Persistent | List of claim IDs |
 | `Claim(Symbol)` | `Claim` | Persistent | Individual claim record |
@@ -482,7 +518,8 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | `reject_claim(caller, claim_id)` | `ROLE_CLAIMS_MGR` | `caller: Address, claim_id: Symbol` | — | Reject a pending claim. |
 | `pay_claim(caller, claim_id, token)` | `ROLE_CLAIMS_MGR` | `caller: Address, claim_id: Symbol, token: Address` | — | Pay out an approved claim. |
 | `get_pool_stats(token)` | — | `token: Address` | `PoolStats` | Get pool statistics. |
-| `get_pool_members()` | — | — | `Vec<PoolMember>` | List pool members. |
+| `get_pool_members()` | — | — | `Vec<PoolMember>` | List every pool member. |
+| `get_pool_member(address)` | — | `address: Address` | `Option<PoolMember>` | Look up a single pool member. |
 | `get_claim(claim_id)` | — | `claim_id: Symbol` | `Claim` | Get claim details. |
 | `rebalance_pool(caller, token, new_premium_bps)` | `ROLE_ADMIN` | `caller: Address, token: Address, new_premium_bps: u32` | — | Adjust premium rate. |
 | `upgrade(caller, new_wasm_hash)` | `ROLE_UPGRADER` | `caller: Address, new_wasm_hash: BytesN<32>` | — | Upgrade contract WASM. |
@@ -565,11 +602,14 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 | Event | Topics | Data | Description |
 |---|---|---|---|
 | `Init` | `("Init",)` | `admin: Address` | Contract initialized |
+| `Paused` | `("Paused", admin: Address)` | `()` | Paused |
+| `Unpaused` | `("Unpaused", admin: Address)` | `()` | Unpaused |
 | `ArbAdd` | `("ArbAdd",)` | `arbitrator: Address` | Arbitrator added |
 | `ArbRem` | `("ArbRem",)` | `arbitrator: Address` | Arbitrator removed |
-| `DspFld` | `("DspFld", id: Symbol)` | `(disputer: Address, amount: i128)` | Dispute filed |
-| `EvdSub` | `("EvdSub", dispute_id: Symbol)` | `respondent: Address` | Evidence submitted |
-| `DspRes` | `("DspRes", dispute_id: Symbol)` | `(arbitrator: Address, outcome: u32)` | Dispute resolved |
+| `DspOpen` | `("DspOpen", id: Symbol, disputer: Address)` | `(respondent: Address, amount: i128)` | Dispute filed |
+| `DspEvid` | `("DspEvid", dispute_id: Symbol, caller: Address)` | `()` | Evidence submitted |
+| `DspDcide` | `("DspDcide", dispute_id: Symbol, arbitrator: Address)` | `(outcome: u32, split_bps: u32)` | Arbitrator decision recorded (no transfer yet) |
+| `DspSettle` | `("DspSettle", dispute_id: Symbol)` | `(outcome: u32, amount: i128)` | Settlement executed |
 
 ### FeeDistribution Contract Events
 
@@ -605,15 +645,93 @@ fn cancel_upgrade(env, admin)                   // cancel pending
 
 ---
 
+## Contract Deployment Guide
+
+This section walks through deploying the contracts to Stellar testnet and mainnet, rolling back a bad deployment, and the security rules that apply to every deployment.
+
+> **Scripts**: `packages/contracts/scripts/deploy-registry.sh` and `packages/contracts/scripts/deploy-market.sh`
+> **Related**: [packages/contracts/SECURITY.md](../packages/contracts/SECURITY.md) · [MAINNET_LAUNCH_CHECKLIST.md](./MAINNET_LAUNCH_CHECKLIST.md) · [contract-upgrade-guide.md](./contract-upgrade-guide.md)
+
+### Deployment Steps (scripts/)
+
+Deployments are driven by the shell scripts in `packages/contracts/scripts/`. Each script builds the WASM, uploads it, deploys an instance, and prints the resulting contract ID.
+
+**Required environment variables** (set in your shell or a local, git-ignored `.env`):
+
+| Variable | Description | Example |
+|---|---|---|
+| `NETWORK` | Target network: `testnet` or `mainnet` | `testnet` |
+| `RPC_URL` | Soroban RPC endpoint for the target network | `https://soroban-testnet.stellar.org` |
+| `NETWORK_PASSPHRASE` | Passphrase matching `NETWORK` | `Test SDF Network ; September 2015` |
+| `SOURCE_ACCOUNT` | Public key (G...) of the deployer account | `GABC...` |
+| `SOURCE_SECRET_KEY` | Secret key (S...) of the deployer — **never commit** | `SABC...` |
+
+**Deployment order** (dependencies flow top to bottom):
+
+1. **Registry** — `./packages/contracts/scripts/deploy-registry.sh`
+   - Builds `registry.wasm`, uploads it, deploys the instance, calls `initialize(admin)`.
+   - Prints `REGISTRY_CONTRACT_ID` — record it for the next steps.
+2. **Market** — `./packages/contracts/scripts/deploy-market.sh`
+   - Builds `market.wasm`, uploads it, deploys the instance, calls `initialize(admin, fee_bps, fee_recipient)`.
+   - Prints `MARKET_CONTRACT_ID`.
+3. **Dispute, FeeDistribution, InsurancePool** — deploy after Market using the same pattern (build → upload → deploy → `initialize`), since they reference the Market/FeeDistribution addresses.
+
+**Running against testnet vs mainnet**:
+
+```bash
+# Testnet
+NETWORK=testnet \
+RPC_URL=https://soroban-testnet.stellar.org \
+NETWORK_PASSPHRASE="Test SDF Network ; September 2015" \
+SOURCE_ACCOUNT=G... SOURCE_SECRET_KEY=S... \
+./packages/contracts/scripts/deploy-registry.sh
+
+# Mainnet (only after MAINNET_LAUNCH_CHECKLIST.md is fully signed off)
+NETWORK=mainnet \
+RPC_URL=https://soroban-mainnet.stellar.org \
+NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015" \
+SOURCE_ACCOUNT=G... SOURCE_SECRET_KEY=S... \
+./packages/contracts/scripts/deploy-registry.sh
+```
+
+After each script completes, copy the printed contract ID into the app's contract ID configuration (see [Rollback](#rollback) for where those values live) and verify with a read-only call (e.g. `get_admin()`, `get_schema_version()`) before proceeding to the next contract.
+
+### Rollback
+
+A rollback restores the previously known-good contract ID and/or WASM hash. Because Soroban contract IDs are immutable, "rolling back" means pointing the app back at the prior deployment (or upgrading the current instance back to the prior WASM hash).
+
+1. **Identify the previous values.** Keep a deployment log (contract ID + WASM hash + schema version + timestamp) per network. The prior entry is your rollback target.
+2. **Revert the contract ID config.** Update the app's contract ID configuration (environment variables / config files consumed by `@bluecollar/sdk`) to the previous contract ID for the affected contract. Do not mix IDs across contracts — roll back the whole set if the deployment was atomic.
+3. **Or revert the WASM hash.** If the instance must stay at the same contract ID, use the upgrade flow (`propose_upgrade` → `execute_upgrade` on Registry, or `upgrade(new_wasm_hash)` where supported) with the previous WASM hash. See [Upgrade Flow](#upgrade-flow).
+4. **Verify.** Call read-only functions (`get_admin()`, `get_schema_version()`, `get_config()`) and confirm the returned values match the pre-deployment state. Run the smoke tests in [CONTRACT_TESTING.md](./CONTRACT_TESTING.md).
+5. **Record the rollback** in the deployment log with the reason and timestamp.
+
+### Security Notes
+
+- **Never commit secret keys.** `SOURCE_SECRET_KEY` and any admin/upgrader keys must never be committed, logged, or pasted into issues. Use a local, git-ignored `.env` or a secrets manager.
+- **Use dedicated deployer accounts.** Deploy from an account created solely for deployments — not a personal or treasury account — so its permissions and history are easy to audit and revoke.
+- **Prefer hardware wallets or CI-managed keys.** For mainnet, sign with a Ledger hardware wallet or a CI secret store (e.g. GitHub Actions secrets) rather than a plaintext key on disk.
+- **Least-privilege admin keys.** Grant `ROLE_ADMIN`, `ROLE_UPGRADER`, and `ROLE_FEE_MANAGER` only to the addresses that need them. Prefer a Stellar multisig for the admin/upgrader roles on mainnet.
+- **Rotate keys.** Rotate deployer and admin keys on a schedule and immediately after any suspected exposure; transfer admin via `set_admin(new_admin)` and revoke stale roles with `revoke_role`.
+- **Full policy**: see [packages/contracts/SECURITY.md](../packages/contracts/SECURITY.md) and the pre-launch sign-off in [MAINNET_LAUNCH_CHECKLIST.md](./MAINNET_LAUNCH_CHECKLIST.md).
+
+---
+
 ## Cross-References
 
 | Document | Link |
 |---|---|
 | Contract Integration Guide (client-side SDK usage) | [CONTRACT_INTEGRATION.md](./CONTRACT_INTEGRATION.md) |
+| Contract Security Policy | [packages/contracts/SECURITY.md](../packages/contracts/SECURITY.md) |
+| Mainnet Launch Checklist | [MAINNET_LAUNCH_CHECKLIST.md](./MAINNET_LAUNCH_CHECKLIST.md) |
+| In-repo TypeScript SDK (`@bluecollar/sdk`) | [packages/sdk/README.md](../packages/sdk/README.md) |
+| Interface Versioning Policy | [packages/contracts/VERSIONING.md](../packages/contracts/VERSIONING.md) |
+| Contracts Package Overview | [packages/contracts/README.md](../packages/contracts/README.md) |
 | Upgrade Runbook & WASM deployment | [contract-upgrade-guide.md](./contract-upgrade-guide.md) |
 | Architecture Overview | [system-overview.svg](./architecture/system-overview.svg) |
 | Environment Variables | [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) |
 | Contract Testing Guide | [CONTRACT_TESTING.md](./CONTRACT_TESTING.md) |
+| Architecture Decision Records (ADRs) | [adr/README.md](./adr/README.md) |
 
 ---
 

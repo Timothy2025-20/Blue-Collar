@@ -1,6 +1,8 @@
-import { AppError, ErrorCode } from '../utils/AppError.js'
-import { getTraceId } from '../monitoring/tracing.js'
-import { ErrorMessages, HttpStatus } from '../constants/index.js'
+import { ZodError } from 'zod'
+import { AppError, ErrorCode } from '@/utils/app-error.js'
+import { getTraceId } from '@/monitoring/tracing.js'
+import { ErrorMessages, HttpStatus } from '@/constants/index.js'
+import { config } from '@/config/config.js'
 
 export interface ErrorResponse {
   status: 'error'
@@ -8,8 +10,13 @@ export interface ErrorResponse {
   code: number
   errorCode: ErrorCode
   traceId?: string
+  details?: unknown
   stack?: string
   originalMessage?: string
+}
+
+function isZodError(err: unknown): err is ZodError {
+  return err instanceof ZodError || (typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'ZodError')
 }
 
 interface PrismaClientKnownRequestError {
@@ -18,13 +25,11 @@ interface PrismaClientKnownRequestError {
 }
 
 function isPrismaError(err: unknown): err is PrismaClientKnownRequestError {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    typeof (err as Record<string, unknown>).code === 'string' &&
-    (err as Record<string, unknown>).code?.toString().startsWith('P')
-  )
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return false
+  }
+  const code = (err as Record<string, unknown>).code
+  return typeof code === 'string' && code.startsWith('P')
 }
 
 function mapPrismaError(err: PrismaClientKnownRequestError): { statusCode: number; message: string; errorCode: ErrorCode } {
@@ -51,18 +56,45 @@ export function serializeError(err: unknown): SerializedError {
     }
   }
 
+  if (isZodError(err)) {
+    // PII SAFETY: only field paths and validation messages are exposed — no raw input values
+    return {
+      statusCode: HttpStatus.BAD_REQUEST,
+      body: {
+        status: 'error',
+        message: ErrorMessages.VALIDATION_ERROR,
+        code: HttpStatus.BAD_REQUEST,
+        errorCode: ErrorCode.VALIDATION_ERROR,
+        traceId,
+        details: err.flatten(),
+      },
+    }
+  }
+
   if (isPrismaError(err)) {
     const { statusCode, message, errorCode } = mapPrismaError(err)
     return { statusCode, body: { status: 'error', message, code: statusCode, errorCode, traceId } }
   }
 
   if (err instanceof AppError && err.isOperational) {
+    // PII SAFETY: operational errors only expose the error message, code and
+    // explicitly provided details — no user data
     return {
       statusCode: err.statusCode,
-      body: { status: 'error', message: err.message, code: err.statusCode, errorCode: err.errorCode, traceId },
+      body: {
+        status: 'error',
+        message: err.message,
+        code: err.statusCode,
+        errorCode: err.errorCode,
+        traceId,
+        ...(err.details !== undefined && { details: err.details }),
+      },
     }
   }
 
+  // PII SAFETY: unexpected errors return a generic message without any
+  // request context, user data, or internal details. Stack traces are
+  // only included in development and are logged server-side only.
   const error = err instanceof Error ? err : new Error(String(err))
   const body: ErrorResponse = {
     status: 'error',
@@ -70,7 +102,7 @@ export function serializeError(err: unknown): SerializedError {
     code: HttpStatus.INTERNAL_SERVER_ERROR,
     errorCode: ErrorCode.INTERNAL_ERROR,
     traceId,
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack, originalMessage: error.message }),
+    ...(config.env === 'development' && { stack: error.stack, originalMessage: error.message }),
   }
   return { statusCode: HttpStatus.INTERNAL_SERVER_ERROR, body }
 }

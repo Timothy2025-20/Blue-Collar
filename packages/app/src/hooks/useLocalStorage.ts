@@ -1,45 +1,34 @@
-import { useState, useCallback } from "react";
+"use client";
 
-/**
- * Syncs state with localStorage. SSR-safe (falls back to initialValue on server).
- *
- * @example
- * const [theme, setTheme] = useLocalStorage('theme', 'light')
- */
-export function useLocalStorage<T>(key: string, initialValue: T) {
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === "undefined") return initialValue;
+import { useEffect, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+
+export function readLocalStorageValue<T>(key: string, fallback: T): T {
+  try {
+    if (typeof window === "undefined") return fallback;
+
+    const storedValue = window.localStorage.getItem(key);
+    return storedValue === null ? fallback : (JSON.parse(storedValue) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+export function useLocalStorage<T>(
+  key: string,
+  initialValue: T
+): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => readLocalStorageValue(key, initialValue));
+
+  useEffect(() => {
     try {
-      const item = window.localStorage.getItem(key);
-      return item !== null ? (JSON.parse(item) as T) : initialValue;
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(key, JSON.stringify(value));
+      }
     } catch {
-      return initialValue;
+      // Storage is optional and may be unavailable or reject writes.
     }
-  });
+  }, [key, value]);
 
-  const setValue = useCallback(
-    (value: T | ((prev: T) => T)) => {
-      setStoredValue((prev) => {
-        const next = value instanceof Function ? value(prev) : value;
-        try {
-          window.localStorage.setItem(key, JSON.stringify(next));
-        } catch {
-          // Ignore write errors (e.g. private browsing quota)
-        }
-        return next;
-      });
-    },
-    [key]
-  );
-
-  const removeValue = useCallback(() => {
-    setStoredValue(initialValue);
-    try {
-      window.localStorage.removeItem(key);
-    } catch {
-      // Ignore
-    }
-  }, [key, initialValue]);
-
-  return [storedValue, setValue, removeValue] as const;
+  return [value, setValue];
 }

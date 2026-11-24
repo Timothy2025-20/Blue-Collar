@@ -1,4 +1,12 @@
-import { AppError } from '../utils/AppError.js'
+import { AppError, ErrorCode } from '@/utils/app-error.js'
+import { nowUtc } from '@/utils/date.js'
+import {
+  calculateFee as domainCalculateFee,
+  validateBasisPoints,
+  MAX_BASIS_POINTS,
+} from '@/domain/fees.js'
+import type { PaymentRepository, TransactionContext } from '@/repositories/payment.repository.js'
+import { PrismaPaymentRepository } from '@/repositories/payment.repository.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -15,7 +23,7 @@ export interface EscrowParams {
   expiryDate: Date
 }
 
-export interface FeeConfig {
+interface FeeConfig {
   fee_bps: number // basis points, e.g. 250 = 2.5%
 }
 
@@ -33,6 +41,26 @@ export interface EscrowResult {
   amount: number
   expiryDate: Date
   status: 'pending'
+}
+
+export interface ReleaseEscrowParams {
+  escrow: EscrowResult
+  caller: string
+}
+
+export interface CancelEscrowParams {
+  escrow: EscrowResult
+  caller: string
+}
+
+export interface ApproveMultiSigParams {
+  escrow: MultiSigEscrowResult
+  signer: string
+}
+
+export interface ReleaseMultiSigParams {
+  escrow: MultiSigEscrowResult
+  caller: string
 }
 
 // ── Multi-sig escrow types ────────────────────────────────────────────────────
@@ -56,16 +84,26 @@ export interface MultiSigEscrowResult {
   signers: string[]
   threshold: number
   approvals: string[]
-  status: 'pending'
+  status: 'pending' | 'released' | 'cancelled'
 }
 
 // ── Standalone helpers (kept for backward-compat & Stryker coverage) ─────────
 
+/**
+ * Calculate the platform fee for a given amount and basis points.
+ * Delegates to the domain module which contains the canonical implementation.
+ *
+ * @see @/domain/fees.ts
+ */
 export function calculateFee(amount: number, fee_bps: number): number {
-  if (fee_bps < 0 || fee_bps > 10_000) {
-    throw new AppError('fee_bps must be between 0 and 10000', 400)
+  try {
+    return domainCalculateFee(amount, fee_bps)
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new AppError('fee_bps must be between 0 and 10000', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    throw error
   }
-  return Math.floor((amount * fee_bps) / 10_000)
 }
 
 // Module-level fee state (shared with PaymentService singleton)
@@ -77,48 +115,53 @@ export function getFeeBps(): number {
 
 export function updateFeeBps(callerRole: string, fee_bps: number): void {
   if (callerRole !== 'admin') {
-    throw new AppError('Only admins can update the fee', 403)
+    throw new AppError('Only admins can update the fee', 403, true, ErrorCode.FORBIDDEN)
   }
-  if (fee_bps < 0 || fee_bps > 10_000) {
-    throw new AppError('fee_bps must be between 0 and 10000', 400)
+  try {
+    validateBasisPoints(fee_bps)
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new AppError('fee_bps must be between 0 and 10000', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    throw error
   }
   _feeBps = fee_bps
 }
 
 export function tip({ from, to, amount }: TipParams): TipResult {
   if (amount <= 0) {
-    throw new AppError('Tip amount must be greater than 0', 400)
+    throw new AppError('Tip amount must be greater than 0', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   if (from === to) {
-    throw new AppError('Sender and recipient must be different', 400)
+    throw new AppError('Sender and recipient must be different', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   const fee = calculateFee(amount, _feeBps)
   return { from, to, grossAmount: amount, fee, netAmount: amount - fee }
 }
 
 export function createEscrow({ from, to, amount, expiryDate }: EscrowParams): EscrowResult {
-  if (expiryDate <= new Date()) {
-    throw new AppError('Escrow expiry must be in the future', 400)
+  if (expiryDate <= nowUtc()) {
+    throw new AppError('Escrow expiry must be in the future', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   if (amount <= 0) {
-    throw new AppError('Escrow amount must be greater than 0', 400)
+    throw new AppError('Escrow amount must be greater than 0', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   return { from, to, amount, expiryDate, status: 'pending' }
 }
 
 export function createMultiSigEscrow(params: MultiSigEscrowParams): MultiSigEscrowResult {
   const { from, to, amount, expiryDate, signers, threshold } = params
-  if (expiryDate <= new Date()) {
-    throw new AppError('Escrow expiry must be in the future', 400)
+  if (expiryDate <= nowUtc()) {
+    throw new AppError('Escrow expiry must be in the future', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   if (amount <= 0) {
-    throw new AppError('Escrow amount must be greater than 0', 400)
+    throw new AppError('Escrow amount must be greater than 0', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   if (signers.length === 0) {
-    throw new AppError('At least one signer is required', 400)
+    throw new AppError('At least one signer is required', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   if (threshold < 1 || threshold > signers.length) {
-    throw new AppError('threshold must be between 1 and signers.length', 400)
+    throw new AppError('threshold must be between 1 and signers.length', 400, true, ErrorCode.VALIDATION_ERROR)
   }
   return { from, to, amount, expiryDate, signers, threshold, approvals: [], status: 'pending' }
 }
@@ -132,9 +175,14 @@ export function createMultiSigEscrow(params: MultiSigEscrowParams): MultiSigEscr
  */
 export class PaymentService {
   private feeBps: number
+  private readonly repository: PaymentRepository
 
-  constructor(initialFeeBps = 250) {
+  constructor(
+    initialFeeBps = 250,
+    repository: PaymentRepository = new PrismaPaymentRepository(),
+  ) {
     this.feeBps = initialFeeBps
+    this.repository = repository
   }
 
   // ── Fee management ──────────────────────────────────────────────────────────
@@ -145,10 +193,15 @@ export class PaymentService {
 
   setFeeBps(callerRole: string, fee_bps: number): void {
     if (callerRole !== 'admin') {
-      throw new AppError('Only admins can update the fee', 403)
+      throw new AppError('Only admins can update the fee', 403, true, ErrorCode.FORBIDDEN)
     }
-    if (fee_bps < 0 || fee_bps > 10_000) {
-      throw new AppError('fee_bps must be between 0 and 10000', 400)
+    try {
+      validateBasisPoints(fee_bps)
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new AppError('fee_bps must be between 0 and 10000', 400, true, ErrorCode.VALIDATION_ERROR)
+      }
+      throw error
     }
     this.feeBps = fee_bps
   }
@@ -162,17 +215,31 @@ export class PaymentService {
   /**
    * Process a tip from one wallet to another.
    * Validates inputs, deducts the platform fee, and returns the breakdown.
+   *
+   * The debit, credit and fee-ledger writes are performed atomically inside a
+   * single database transaction so a partial write can never occur.
    */
-  tip(params: TipParams): TipResult {
+  async tip(params: TipParams): Promise<TipResult> {
     const { from, to, amount } = params
     if (amount <= 0) {
-      throw new AppError('Tip amount must be greater than 0', 400)
+      throw new AppError('Tip amount must be greater than 0', 400, true, ErrorCode.VALIDATION_ERROR)
     }
     if (from === to) {
-      throw new AppError('Sender and recipient must be different', 400)
+      throw new AppError('Sender and recipient must be different', 400, true, ErrorCode.VALIDATION_ERROR)
     }
     const fee = this.calculateFee(amount)
-    return { from, to, grossAmount: amount, fee, netAmount: amount - fee }
+    const netAmount = amount - fee
+
+    await this.repository.transaction(async (tx: TransactionContext) => {
+      await this.repository.debitWallet(tx, from, amount)
+      await this.repository.creditWallet(tx, to, netAmount)
+      if (fee > 0) {
+        await this.repository.recordFee(tx, fee)
+      }
+      await this.repository.recordTip(tx, { from, to, grossAmount: amount, fee, netAmount })
+    })
+
+    return { from, to, grossAmount: amount, fee, netAmount }
   }
 
   // ── Escrow ──────────────────────────────────────────────────────────────────
@@ -181,24 +248,132 @@ export class PaymentService {
    * Create a time-locked escrow payment.
    * The escrow is held until the expiry date, after which it can be released
    * or cancelled by the appropriate party.
+   *
+   * The escrow record and the wallet debit are written atomically.
    */
-  createEscrow(params: EscrowParams): EscrowResult {
+  async createEscrow(params: EscrowParams): Promise<EscrowResult> {
     const { from, to, amount, expiryDate } = params
-    if (expiryDate <= new Date()) {
-      throw new AppError('Escrow expiry must be in the future', 400)
+    if (expiryDate <= nowUtc()) {
+      throw new AppError('Escrow expiry must be in the future', 400, true, ErrorCode.VALIDATION_ERROR)
     }
     if (amount <= 0) {
-      throw new AppError('Escrow amount must be greater than 0', 400)
+      throw new AppError('Escrow amount must be greater than 0', 400, true, ErrorCode.VALIDATION_ERROR)
     }
+
+    await this.repository.transaction(async (tx: TransactionContext) => {
+      await this.repository.debitWallet(tx, from, amount)
+      await this.repository.createEscrow(tx, { from, to, amount, expiryDate, status: 'pending' })
+    })
+
     return { from, to, amount, expiryDate, status: 'pending' }
   }
 
   /**
    * Create a multi-signature escrow requiring threshold approvals before release.
    * Validates all inputs and returns the initial escrow state with an empty approvals list.
+   *
+   * The escrow record, signer rows and wallet debit are written atomically.
    */
-  createMultiSigEscrow(params: MultiSigEscrowParams): MultiSigEscrowResult {
-    return createMultiSigEscrow(params)
+  async createMultiSigEscrow(params: MultiSigEscrowParams): Promise<MultiSigEscrowResult> {
+    const result = createMultiSigEscrow(params)
+    const { from, to, amount, expiryDate, signers, threshold } = result
+
+    await this.repository.transaction(async (tx: TransactionContext) => {
+      await this.repository.debitWallet(tx, from, amount)
+      await this.repository.createMultiSigEscrow(tx, {
+        from,
+        to,
+        amount,
+        expiryDate,
+        signers,
+        threshold,
+        approvals: [],
+        status: 'pending',
+      })
+    })
+
+    return result
+  }
+
+  /**
+   * Release a standard escrow to the recipient.
+   * Only the sender may release, and only after the expiry date has passed.
+   */
+  releaseEscrow({ escrow, caller }: ReleaseEscrowParams): EscrowResult {
+    if (escrow.status !== 'pending') {
+      throw new AppError('Escrow is not pending', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (caller !== escrow.from) {
+      throw new AppError('Only the sender can release the escrow', 403, true, ErrorCode.FORBIDDEN)
+    }
+    if (escrow.expiryDate > nowUtc()) {
+      throw new AppError('Escrow has not expired yet', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    return { ...escrow, status: 'pending' }
+  }
+
+  /**
+   * Cancel a pending escrow, returning funds to the sender.
+   * Either the sender or the recipient may cancel.
+   */
+  cancelEscrow({ escrow, caller }: CancelEscrowParams): EscrowResult {
+    if (escrow.status !== 'pending') {
+      throw new AppError('Escrow is not pending', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (caller !== escrow.from && caller !== escrow.to) {
+      throw new AppError('Only the sender or recipient can cancel the escrow', 403, true, ErrorCode.FORBIDDEN)
+    }
+    return { ...escrow, status: 'pending' }
+  }
+
+  /**
+   * Record an approval from an authorised signer on a multi-sig escrow.
+   * Duplicate approvals are ignored; the returned escrow reflects the new state.
+   */
+  approveMultiSigEscrow({ escrow, signer }: ApproveMultiSigParams): MultiSigEscrowResult {
+    if (escrow.status !== 'pending') {
+      throw new AppError('Escrow is not pending', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (!escrow.signers.includes(signer)) {
+      throw new AppError('Caller is not an authorised signer', 403, true, ErrorCode.FORBIDDEN)
+    }
+    if (escrow.approvals.includes(signer)) {
+      return { ...escrow, approvals: [...escrow.approvals] }
+    }
+    return { ...escrow, approvals: [...escrow.approvals, signer] }
+  }
+
+  /**
+   * Release a multi-sig escrow once the approval threshold is met and the
+   * expiry date has passed.
+   */
+  releaseMultiSigEscrow({ escrow, caller }: ReleaseMultiSigParams): MultiSigEscrowResult {
+    if (escrow.status !== 'pending') {
+      throw new AppError('Escrow is not pending', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (!escrow.signers.includes(caller)) {
+      throw new AppError('Caller is not an authorised signer', 403, true, ErrorCode.FORBIDDEN)
+    }
+    if (escrow.approvals.length < escrow.threshold) {
+      throw new AppError('Approval threshold not met', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (escrow.expiryDate > nowUtc()) {
+      throw new AppError('Escrow has not expired yet', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    return { ...escrow, status: 'released' }
+  }
+
+  /**
+   * Cancel a pending multi-sig escrow. Only the sender may cancel.
+   */
+  cancelMultiSigEscrow({ escrow, caller }: ReleaseMultiSigParams): MultiSigEscrowResult {
+    if (escrow.status !== 'pending') {
+      throw new AppError('Escrow is not pending', 400, true, ErrorCode.VALIDATION_ERROR)
+    }
+    if (caller !== escrow.from) {
+      throw new AppError('Only the sender can cancel the escrow', 403, true, ErrorCode.FORBIDDEN)
+    }
+    return { ...escrow, status: 'cancelled' }
   }
 }
 

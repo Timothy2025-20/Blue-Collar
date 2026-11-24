@@ -21,13 +21,16 @@ Many skilled workers lack a platform to help them get noticed. Meanwhile, countl
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Monorepo Structure](#monorepo-structure)
+- [Architecture Decision Records](docs/adr/README.md)
 - [Packages](#packages)
   - [API](#api-packagesapi)
   - [Contracts](#contracts-packagescontracts)
   - [App](#app-packagesapp)
+  - [Mobile](#mobile-packagesmobile)
 - [API Reference](#api-reference)
 - [Smart Contracts](#smart-contracts)
 - [Getting Started](#getting-started)
+- [Local Developer Setup Guide](docs/setup.md)
 - [Environment Variables](#environment-variables)
 - [Production Deployment](#production-deployment)
 - [Status Page](#status-page)
@@ -35,8 +38,13 @@ Many skilled workers lack a platform to help them get noticed. Meanwhile, countl
 - [Community](#community)
 - [Contributing](#contributing)
 - [License](#license)
+- [Architecture Decision Records (index)](docs/adr/README.md)
+- [Monorepo Package Boundaries (ADR)](docs/adr/0001-monorepo-package-boundaries.md)
+- [Developer Setup Guide](docs/setup.md)
+- [API Reference (generated)](docs/api.md)
+- [SDK Usage Guide](packages/sdk/README.md)
 - [Quick Start Guide](packages/api/QUICK_START_GUIDE.md)
-- [API Documentation](packages/api/DOCUMENTATION.json)
+- [API Reference](packages/api/API_REFERENCE.md)
 - [API cURL Examples](packages/api/CURL_EXAMPLES.md)
 - [Security Policy](packages/api/SECURITY.md)
 - [Environment Variables](docs/ENVIRONMENT_VARIABLES.md)
@@ -44,6 +52,7 @@ Many skilled workers lack a platform to help them get noticed. Meanwhile, countl
 - [Contract Reference](docs/CONTRACTS.md)
 - [Contract Integration Guide](docs/CONTRACT_INTEGRATION.md)
 - [Contributing Guide](CONTRIBUTING.md)
+- [Error Handling & Logging Conventions](docs/ERROR_HANDLING_AND_LOGGING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Frontend Contributing Guide](packages/app/CONTRIBUTING.md)
 - [i18n & Translation Guide](docs/i18n-translations.md)
@@ -133,8 +142,16 @@ bluecollar/
 │   │   │       └── src/lib.rs
 │   │   └── Cargo.toml
 │   │
-│   └── app/                  # Next.js frontend
+│   ├── app/                  # Next.js frontend
+│   │   ├── src/
+│   │   └── package.json
+│   │
+│   └── mobile/               # React Native mobile app (Expo)
 │       ├── src/
+│       │   ├── auth/         # SecureStorage & BiometricAuth
+│       │   ├── screens/      # App screens
+│       │   └── context/      # React context providers
+│       ├── docs/
 │       └── package.json
 │
 ├── package.json              # Root workspace config
@@ -142,9 +159,28 @@ bluecollar/
 └── README.md
 ```
 
+For the rationale behind this split — what each package is for, which packages are
+allowed to depend on which, and a dependency graph — see
+[docs/adr/0001-monorepo-package-boundaries.md](docs/adr/0001-monorepo-package-boundaries.md).
+All architecture decisions (escrow, tipping, contract upgrade pattern, and package
+boundaries) are recorded in the [ADR index](docs/adr/README.md).
+
 ---
 
 ## Packages
+
+| Package | Purpose |
+| --- | --- |
+| [API](packages/api/README.md) | REST API for the BlueCollar platform and its worker listings. |
+| [App](packages/app/README.md) | Next.js web frontend for discovering and connecting with skilled workers. |
+| [Contracts](packages/contracts/README.md) | Stellar Soroban smart contracts that power the BlueCollar protocol. |
+| [Mobile](packages/mobile/README.md) | Expo-based React Native app for browsing workers and using BlueCollar services. |
+| [Monitoring](packages/monitoring/README.md) | Contract event monitoring, balance tracking, and alerting. |
+| [SDK](packages/sdk/README.md) | Shared SDK for interacting with Stellar and BlueCollar contracts. See the [SDK usage guide](packages/sdk/README.md) for install instructions, public methods, and examples. |
+| [Test Utils](packages/test-utils/README.md) | Shared test factories and rendering helpers for workspace packages. |
+| [Types](packages/types/README.md) | Shared TypeScript types, DTOs, and Zod validation schemas. |
+
+All top-level packages currently have a README; no missing-README follow-up is needed.
 
 ### API (`packages/api`)
 
@@ -190,9 +226,33 @@ Next.js 14 frontend. Connects to the BlueCollar API and integrates with Stellar 
 
 ---
 
+### Mobile (`packages/mobile`)
+
+React Native mobile app built with **Expo**. Features secure authentication with hardware-backed token storage and biometric unlock.
+
+**Key modules:**
+
+| Module | Purpose |
+|--------|---------|
+| `auth/SecureStorage.ts` | Hardware-backed token storage (Keychain/Keystore) |
+| `auth/BiometricAuth.ts` | Biometric authentication (Face ID, Touch ID, Fingerprint) |
+| `context/AuthContext.tsx` | Authentication state management |
+| `screens/BiometricSettingsScreen.tsx` | Biometric unlock settings |
+| `screens/AppLockScreen.tsx` | Biometric unlock prompt |
+
+**Tech stack:** React Native · Expo · expo-secure-store · expo-local-authentication
+
+**Documentation:** See [packages/mobile/docs/AUTHENTICATION.md](./packages/mobile/docs/AUTHENTICATION.md)
+
+---
+
 ## API Reference
 
 Base URL: `http://localhost:3000/api`
+
+> The generated, always-up-to-date reference (including the authentication flow and
+> request/response schemas derived from the API's Zod validators) lives in
+> [docs/api.md](docs/api.md). The summary below is a hand-maintained overview.
 
 ### Auth
 
@@ -252,7 +312,7 @@ Base URL: `http://localhost:3000/api`
 > X-HTTP-Method: PUT
 > ```
 >
-> See [DOCUMENTATION.json](packages/api/DOCUMENTATION.json) for detailed explanation of the method-override pattern, including client implementation examples and common mistakes to avoid.
+> See [API_REFERENCE.md](packages/api/API_REFERENCE.md#the-x-http-method-override-pattern) for a detailed explanation of the method-override pattern, including client implementation examples.
 
 ### Admin
 
@@ -266,11 +326,11 @@ For the full contract reference including signatures, storage maps, events, and 
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) with `wasm32-unknown-unknown` target
+- [Rust](https://rustup.rs/) with `wasm32v1-none` target
 - [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli)
 
 ```bash
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32v1-none
 cargo install --locked stellar-cli
 ```
 
@@ -278,14 +338,14 @@ cargo install --locked stellar-cli
 
 ```bash
 cd packages/contracts
-cargo build --release --target wasm32-unknown-unknown
+cargo build --release --target wasm32v1-none
 ```
 
 ### Deploy to Testnet
 
 ```bash
 stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/bluecollar_registry.wasm \
+  --wasm target/wasm32v1-none/release/bluecollar_registry.wasm \
   --source <your-secret-key> \
   --network testnet
 ```
@@ -298,7 +358,7 @@ To upgrade a deployed contract without redeploying (preserving its contract ID a
 
 ```bash
 stellar contract install \
-  --wasm target/wasm32-unknown-unknown/release/bluecollar_registry.wasm \
+  --wasm target/wasm32v1-none/release/bluecollar_registry.wasm \
   --source <your-secret-key> \
   --network testnet
 # outputs: <new_wasm_hash>
@@ -372,6 +432,11 @@ pnpm docker:down
 
 ## Getting Started
 
+> This section is a short quick-start for `api` + `app` only. For the authoritative guide
+> covering every package — `api`, `app`, `contracts`, `sdk`, `mobile`, `monitoring`, `types` —
+> plus pnpm workspace setup, docker-compose, environment variables, database, and local
+> Soroban/Stellar network setup, see the **[Developer Setup Guide](docs/setup.md)**.
+
 ### Prerequisites
 
 - Node.js >= 20
@@ -379,32 +444,23 @@ pnpm docker:down
 - PostgreSQL
 - Rust (for contracts)
 
-### Install
+### Quick start
 
 ```bash
 git clone https://github.com/Fidelis900/Blue-Collar.git
 cd Blue-Collar
 pnpm install
+
+# API
+cp packages/api/.env.example packages/api/.env   # fill in DATABASE_URL and JWT_SECRET
+cd packages/api && pnpm migrate && pnpm seed && pnpm dev   # :3000
+
+# App (in another terminal)
+cd packages/app && pnpm dev   # :3001
 ```
 
-### Run the API
-
-```bash
-cp packages/api/.env.example packages/api/.env
-# fill in DATABASE_URL and JWT_SECRET
-
-cd packages/api
-pnpm migrate       # run prisma migrations
-pnpm seed          # seed categories
-pnpm dev           # start dev server on :3000
-```
-
-### Run the App
-
-```bash
-cd packages/app
-pnpm dev           # start Next.js on :3001
-```
+For Docker Compose, per-package setup, and troubleshooting, follow
+[docs/setup.md](docs/setup.md).
 
 ---
 
@@ -502,3 +558,11 @@ All PRs require passing CI checks.
 ## License
 
 MIT © BlueCollar Contributors
+
+## Handsoff notes
+
+<!-- handsoff-issue-1453 -->
+- #1453: [Testing] Add E2E coverage for dispute-filing and resolution flow
+
+<!-- handsoff-issue-1456 -->
+- #1456: [Testing] Add unit tests for `packages/mobile/src/auth` achieving 90%+ coverage

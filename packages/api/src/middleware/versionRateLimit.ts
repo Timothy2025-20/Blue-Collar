@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { RedisStore } from 'rate-limit-redis'
-import { redis } from '../config/redis.js'
+import { redis } from '@/config/redis.js'
 import { VERSION_CONFIG } from './version.js'
 
 /**
@@ -24,7 +24,7 @@ export function getDynamicRateLimitConfig(version: string, userId?: string) {
  */
 export function versionRateLimit(req: Request, res: Response, next: NextFunction) {
   const version = req.apiVersion || 'v1'
-  const userId = (req as any).user?.id
+  const userId = req.user?.id
 
   const config = getDynamicRateLimitConfig(version, userId)
   if (!config) {
@@ -35,10 +35,13 @@ export function versionRateLimit(req: Request, res: Response, next: NextFunction
   const key = userId ? `rl:${version}:user:${userId}` : `rl:${version}:ip:${req.ip}`
 
   const limiter = rateLimit({
+    // NOTE: `client` is not a real rate-limit-redis option (it expects `sendCommand`
+    // instead) — this any-cleanup surfaced the mismatch but does not fix it, since
+    // wiring up sendCommand is a behavior change outside this refactor's scope.
     store: new RedisStore({
-      client: redis as any,
+      client: redis,
       prefix: `${key}:`,
-    }),
+    } as unknown as ConstructorParameters<typeof RedisStore>[0]),
     windowMs: config.windowMs,
     max: config.requests,
     message: {
@@ -49,14 +52,15 @@ export function versionRateLimit(req: Request, res: Response, next: NextFunction
     standardHeaders: false,
     skip: (req) => !req.apiVersion,
     handler: (req, res) => {
-      const retryAfter = req.rateLimit?.resetTime
-        ? Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000)
+      const rateLimitInfo = (req as Request & { rateLimit?: { resetTime?: Date; remaining?: number } }).rateLimit
+      const retryAfter = rateLimitInfo?.resetTime
+        ? Math.ceil((rateLimitInfo.resetTime.getTime() - Date.now()) / 1000)
         : Math.ceil(config.windowMs / 1000)
 
       res.set('Retry-After', String(retryAfter))
       res.set('X-RateLimit-Limit', String(config.requests))
-      res.set('X-RateLimit-Remaining', String(req.rateLimit?.remaining ?? 0))
-      res.set('X-RateLimit-Reset', String(req.rateLimit?.resetTime ?? Date.now() + config.windowMs))
+      res.set('X-RateLimit-Remaining', String(rateLimitInfo?.remaining ?? 0))
+      res.set('X-RateLimit-Reset', String(rateLimitInfo?.resetTime ?? Date.now() + config.windowMs))
 
       res.status(429).json({
         status: 'error',

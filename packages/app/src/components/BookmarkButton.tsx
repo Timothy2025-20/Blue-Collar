@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Heart } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { toggleBookmark } from "@/lib/api";
+import { useToggleBookmark } from "@/hooks/queries";
+import { useSubmitGuard } from "@/hooks/useSubmitGuard";
 import { cn } from "@/lib/utils";
 
 interface BookmarkButtonProps {
@@ -14,7 +15,7 @@ interface BookmarkButtonProps {
 
 /**
  * Heart icon button that toggles a worker bookmark for the authenticated user.
- * Optimistically updates UI on click.
+ * Optimistically updates UI on click via the shared useToggleBookmark hook.
  */
 export default function BookmarkButton({
   workerId,
@@ -23,30 +24,36 @@ export default function BookmarkButton({
 }: BookmarkButtonProps) {
   const t = useTranslations("workerCard");
   const [bookmarked, setBookmarked] = useState(initialBookmarked);
-  const [loading, setLoading] = useState(false);
+  const toggleBookmark = useToggleBookmark();
+  const { isSubmitting, guard } = useSubmitGuard();
 
   const handleClick = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (loading) return;
-    setBookmarked((prev) => !prev);
-    setLoading(true);
-    try {
-      const res = await toggleBookmark(workerId);
-      setBookmarked(res.data.bookmarked);
-    } catch {
-      setBookmarked((prev) => !prev); // revert on error
-    } finally {
-      setLoading(false);
-    }
+    if (isSubmitting) return;
+    await guard(async () => {
+      // Optimistic update
+      setBookmarked((prev) => !prev);
+      try {
+        const res = await toggleBookmark.mutateAsync(workerId);
+        if (res.data) setBookmarked(res.data.bookmarked);
+      } catch {
+        setBookmarked((prev) => !prev); // revert on error
+      }
+    });
   };
 
   return (
     <button
+      type="button"
       onClick={handleClick}
+      disabled={isSubmitting}
+      aria-busy={isSubmitting}
       aria-label={bookmarked ? t("bookmarkRemove") : t("bookmarkAdd")}
+      aria-pressed={bookmarked}
       className={cn(
         "rounded-full p-1.5 transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500",
         bookmarked
           ? "text-red-500 hover:text-red-600"
           : "text-gray-300 hover:text-red-400",

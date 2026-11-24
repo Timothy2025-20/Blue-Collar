@@ -1,5 +1,14 @@
 // This is the BlueCollar Prisma schema
 // Built on Stellar — connecting skilled workers with users
+//
+// ═══════════════════════════════════════════════════════════════
+// COMPLIANCE: Encryption-at-Rest & PII Management
+// ═══════════════════════════════════════════════════════════════
+// All columns marked `@encrypted` MUST be encrypted at the
+// application layer using AES-256-GCM before being stored.
+// Keys are managed via AWS KMS / HashiCorp Vault (see docs/COMPLIANCE.md).
+// PII fields are explicitly annotated below for audit traceability.
+// ═══════════════════════════════════════════════════════════════
 
 generator client {
   provider = "prisma-client-js"
@@ -10,7 +19,7 @@ datasource db {
 }
 
 model Location {
-  id      String  @id @default(cuid())
+  id      String   @id @default(cuid())
   city    String
   state   String?
   country String
@@ -19,62 +28,95 @@ model Location {
   users   User[]
   workers Worker[]
   jobs    Job[]
+
+  @@index([city])
+  @@index([state])
+  @@index([country])
+  @@index([lat, lng])
 }
 
 model User {
-  id                      String    @id @default(cuid())
-  email                   String    @unique
+  id                      String                    @id @default(cuid())
+  /// @encrypted — PII (High sensitivity, AES-256-GCM)
+  email                   String                    @unique
+  /// @encrypted — Argon2id hash (never plaintext)
   password                String?
-  googleId                String?   @unique
+  /// @encrypted — PII (Medium sensitivity, AES-256-GCM)
+  googleId                String?                   @unique
   firstName               String
   lastName                String
-  role                    Role      @default(user)
+  role                    Role                      @default(user)
   walletAddress           String?
   avatar                  String?
   bio                     String?
+  /// @encrypted — PII (High sensitivity, AES-256-GCM)
   phone                   String?
-  verified                Boolean   @default(false)
+  verified                Boolean                   @default(false)
+  /// @encrypted — Critical token (Argon2id hash)
   verificationToken       String?
   verificationTokenExpiry DateTime?
-  resetToken              String?   @unique
+  /// @encrypted — Critical token (Argon2id hash)
+  resetToken              String?                   @unique
   resetTokenExpiry        DateTime?
+  /// @encrypted — Critical (AES-256-GCM)
   twoFactorSecret         String?
-  twoFactorEnabled        Boolean   @default(false)
-  twoFactorBackupCodes    String[]  @default([])
-  referralCode            String?   @unique
-  onboardingCompleted     Boolean   @default(false)
+  twoFactorEnabled        Boolean                   @default(false)
+  /// @encrypted — Critical (AES-256-GCM, each code encrypted)
+  twoFactorBackupCodes    String[]                  @default([])
+  referralCode            String?                   @unique
+  onboardingCompleted     Boolean                   @default(false)
+  reminderSentAt          DateTime?
+  reminderCount           Int                       @default(0)
+  unsubscribedReminders   Boolean                   @default(false)
   locationId              String?
-  location                Location? @relation(fields: [locationId], references: [id])
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  location                Location?                 @relation(fields: [locationId], references: [id])
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
   deletedAt               DateTime?
   workers                 Worker[]
-  reviews                 Review[]             @relation("ReviewUser")
-  authoredReviews         Review[]             @relation("ReviewAuthor")
+  reviews                 Review[]                  @relation("ReviewUser")
+  authoredReviews         Review[]                  @relation("ReviewAuthor")
   bookmarks               Bookmark[]
   contactRequests         ContactRequest[]
   pushSubscriptions       PushSubscription[]
-  disputesFiled           Dispute[]            @relation("DisputesFiled")
-  disputesResolved        Dispute[]            @relation("DisputesResolved")
+  disputesFiled           Dispute[]                 @relation("DisputesFiled")
+  disputesResolved        Dispute[]                 @relation("DisputesResolved")
   interactions            UserInteraction[]
   webhooks                WebhookSubscription[]
-  verificationRequests    VerificationRequest[] @relation("VerificationRequests")
-  verificationReviews     VerificationRequest[] @relation("VerificationReviews")
+  verificationRequests    VerificationRequest[]     @relation("VerificationRequests")
+  verificationReviews     VerificationRequest[]     @relation("VerificationReviews")
   auditLogs               AuditLog[]
-  referralsMade               Referral[]            @relation("ReferralsMade")
-  referralUsed                Referral?             @relation("ReferralUsed")
-  jobs                        Job[]                 @relation("JobsPosted")
-  jobMessagesSent             JobMessage[]          @relation("JobMessagesSent")
-  jobMessagesReceived         JobMessage[]          @relation("JobMessagesReceived")
-  refreshTokens               RefreshToken[]
-  devices                     Device[]
-  notificationPreferences     NotificationPreferences?
-  notifications               Notification[]
-  helpfulVotes                ReviewHelpful[]
-  conversations               ConversationParticipant[]
-  messagesSent                Message[]
-  initiatedConversations      Conversation[]           @relation("ConversationInitiator")
-  stellarAccounts             StellarAccount[]
+  referralsMade           Referral[]                @relation("ReferralsMade")
+  referralUsed            Referral?                 @relation("ReferralUsed")
+  jobs                    Job[]                     @relation("JobsPosted")
+  jobMessagesSent         JobMessage[]              @relation("JobMessagesSent")
+  jobMessagesReceived     JobMessage[]              @relation("JobMessagesReceived")
+  refreshTokens           RefreshToken[]
+  devices                 Device[]
+  notificationPreferences NotificationPreferences?
+  notifications           Notification[]
+  helpfulVotes            ReviewHelpful[]
+  conversations           ConversationParticipant[]
+  messagesSent            Message[]
+  initiatedConversations  Conversation[]            @relation("ConversationInitiator")
+  stellarAccounts         StellarAccount[]
+  /// Workers created by this user (audit trail — #833)
+  workersCreated          Worker[]                  @relation("WorkerCreatedBy")
+  /// Workers last updated by this user (audit trail — #833)
+  workersUpdated              Worker[]             @relation("WorkerUpdatedBy")
+  bookingsRequested           Booking[]            @relation("BookingRequester")
+
+  @@index([email])
+  @@index([role])
+  @@index([deletedAt])
+  @@index([createdAt])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([role, deletedAt])
+  @@index([locationId])
+  @@index([walletAddress])
+  @@index([verified])
+  @@index([onboardingCompleted])
+  @@index([createdAt, deletedAt])
 }
 
 model Category {
@@ -89,39 +131,47 @@ model Category {
 }
 
 model Worker {
-  id                  String          @id @default(cuid())
-  name                String
-  bio                 String?
-  avatar              String?
+  id                   String                   @id @default(cuid())
+  name                 String
+  bio                  String?
+  avatar               String?
   /// 64×64 WebP thumbnail URL (generated by Sharp on upload)
-  imageThumb          String?
+  imageThumb           String?
   /// 256×256 WebP medium URL (generated by Sharp on upload)
-  imageMedium         String?
+  imageMedium          String?
   /// 800×800 WebP full-size URL (generated by Sharp on upload)
-  imageFull           String?
-  phone               String?
-  email               String?
-  walletAddress       String?
-  isActive            Boolean         @default(true)
-  isVerified          Boolean         @default(false)
-  stellarContractId   String?
+  imageFull            String?
+  /// @encrypted — PII (High sensitivity, AES-256-GCM)
+  phone                String?
+  /// @encrypted — PII (High sensitivity, AES-256-GCM)
+  email                String?
+  walletAddress        String?
+  isActive             Boolean                  @default(true)
+  isVerified           Boolean                  @default(false)
+  stellarContractId    String?
   /// PostgreSQL tsvector column — maintained by DB trigger, used for full-text search
-  searchVector        Unsupported("tsvector")?
-  categoryId          String
-  category            Category        @relation(fields: [categoryId], references: [id])
-  curatorId           String
-  curator             User            @relation(fields: [curatorId], references: [id])
-  locationId          String?
-  location            Location?       @relation(fields: [locationId], references: [id])
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  deletedAt           DateTime?
-  bookmarks           Bookmark[]
-  reviews             Review[]
-  availability        Availability[]
-  contactRequests     ContactRequest[]
-  disputes            Dispute[]
-  interactions        UserInteraction[]
+  searchVector         Unsupported("tsvector")?
+  categoryId           String
+  category             Category                 @relation(fields: [categoryId], references: [id])
+  curatorId            String
+  curator              User                     @relation(fields: [curatorId], references: [id])
+  locationId           String?
+  location             Location?                @relation(fields: [locationId], references: [id])
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  deletedAt            DateTime?
+  /// ID of the User who created this listing (audit trail — #833)
+  createdById          String?
+  createdBy            User?                    @relation("WorkerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// ID of the User who last modified this listing (audit trail — #833)
+  updatedById          String?
+  updatedBy            User?                    @relation("WorkerUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  bookmarks            Bookmark[]
+  reviews              Review[]
+  availability         Availability[]
+  contactRequests      ContactRequest[]
+  disputes             Dispute[]
+  interactions         UserInteraction[]
   verificationRequests VerificationRequest[]
   insuranceDocuments  InsuranceDocument[]
   portfolioItems      PortfolioItem[]
@@ -129,6 +179,30 @@ model Worker {
   jobApplications     JobApplication[]
   profileViews        ProfileView[]
   analytics           WorkerAnalytics?
+  bookings            Booking[]
+  tipEvents           WorkerTipEvent[]
+
+  @@index([isActive, categoryId])
+  @@index([curatorId])
+  @@index([locationId])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@index([createdById])
+  @@index([updatedById])
+  // ── Covering indexes for common search/filter queries ──
+  @@index([isActive, categoryId, createdAt])
+  @@index([isActive, isVerified, categoryId])
+  @@index([name]) // full-text prefix search
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([isActive, deletedAt])
+  @@index([isActive, deletedAt, createdAt])
+  @@index([isActive, categoryId, deletedAt, createdAt])
+  @@index([locationId, isActive])
+  @@index([curatorId, isActive])
+  @@index([isVerified, isActive])
+  @@index([walletAddress])
+  @@index([stellarContractId])
+  @@index([updatedAt])
 }
 
 model Bookmark {
@@ -140,6 +214,9 @@ model Bookmark {
   worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
 
   @@unique([userId, workerId])
+  // ── Issue #1813: indexes for reverse lookups and counts ──
+  @@index([workerId])
+  @@index([userId, createdAt])
 }
 
 model PushSubscription {
@@ -150,17 +227,25 @@ model PushSubscription {
   auth      String
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Availability {
   id        String   @id @default(cuid())
   workerId  String
-  dayOfWeek Int      // 0=Sun … 6=Sat
-  startTime String   // "09:00"
-  endTime   String   // "17:00"
+  dayOfWeek Int // 0=Sun … 6=Sat
+  startTime String // "09:00"
+  endTime   String // "17:00"
+  timezone  String   @default("UTC")
+  isRecurring Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@unique([workerId, dayOfWeek])
+  @@index([workerId])
+  @@index([workerId, dayOfWeek, startTime, endTime]) // covering index for availability filter
 }
 
 model PortfolioItem {
@@ -172,42 +257,63 @@ model PortfolioItem {
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([workerId])
+  // ── Issue #1813: index for ordered portfolio fetch ──
+  @@index([workerId, order])
 }
 
 model Review {
-  id          String        @id @default(cuid())
-  workerId    String
-  worker      Worker        @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?         @relation("ReviewUser", fields: [userId], references: [id], onDelete: Cascade)
-  authorId    String
-  author      User          @relation("ReviewAuthor", fields: [authorId], references: [id])
-  rating      Int
-  body        String        @default("")
-  comment     String?
-  status      ReviewStatus  @default(pending)
-  flagged     Boolean       @default(false)
-  flagReason  String?
+  id              String          @id @default(cuid())
+  workerId        String
+  worker          Worker          @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  userId          String?
+  user            User?           @relation("ReviewUser", fields: [userId], references: [id], onDelete: Cascade)
+  authorId        String
+  author          User            @relation("ReviewAuthor", fields: [authorId], references: [id])
+  rating          Int
+  body            String          @default("")
+  comment         String?
+  status          ReviewStatus    @default(pending)
+  flagged         Boolean         @default(false)
+  flagReason      String?
   // Issue #750: Verified transactions
-  transactionHash String?   // On-chain transaction hash (tip/escrow)
-  isVerified  Boolean       @default(false)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  transactionHash String? // On-chain transaction hash (tip/escrow)
+  isVerified      Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  helpfulVotes    ReviewHelpful[]
 
   @@unique([userId, workerId])
+  @@index([workerId])
+  @@index([workerId, status])
+  @@index([authorId])
+  @@index([workerId, rating]) // covering index for avg rating aggregation
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([workerId, status, createdAt])
+  @@index([workerId, createdAt])
+  @@index([status, createdAt])
+  @@index([flagged])
+  @@index([userId])
 }
 
 model Subscription {
-  id                 String             @id @default(cuid())
-  workerId           String             @unique
-  worker             Worker             @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  tier               SubscriptionTier   @default(free)
-  stripeCustomerId   String?
-  stripeSubId        String?
-  currentPeriodEnd   DateTime?
-  cancelAtPeriodEnd  Boolean            @default(false)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                String           @id @default(cuid())
+  workerId          String           @unique
+  worker            Worker           @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  tier              SubscriptionTier @default(free)
+  stripeCustomerId  String?
+  stripeSubId       String?
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // ── Issue #1813: indexes for billing lookups ──
+  @@index([tier])
+  @@index([stripeCustomerId])
+  @@index([stripeSubId])
+  @@index([currentPeriodEnd])
 }
 
 model Dispute {
@@ -224,6 +330,14 @@ model Dispute {
   worker       Worker        @relation(fields: [workerId], references: [id], onDelete: Cascade)
   filedBy      User          @relation("DisputesFiled", fields: [filedById], references: [id], onDelete: Cascade)
   resolvedBy   User?         @relation("DisputesResolved", fields: [resolvedById], references: [id])
+
+  @@index([workerId])
+  @@index([filedById])
+  @@index([status])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([status, createdAt])
+  @@index([workerId, status])
+  @@index([resolvedById])
 }
 
 model UserInteraction {
@@ -237,6 +351,9 @@ model UserInteraction {
 
   @@index([userId])
   @@index([workerId])
+  // ── Issue #1813: indexes for interaction analytics ──
+  @@index([workerId, type, createdAt])
+  @@index([userId, type, createdAt])
 }
 
 model WebhookSubscription {
@@ -252,6 +369,8 @@ model WebhookSubscription {
   logs      WebhookLog[]
 
   @@index([userId])
+  // ── Issue #1813: index for active webhook dispatch ──
+  @@index([isActive])
 }
 
 model WebhookLog {
@@ -267,6 +386,10 @@ model WebhookLog {
   subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([subscriptionId])
+  // ── Issue #1813: indexes for log queries ──
+  @@index([subscriptionId, createdAt])
+  @@index([success])
+  @@index([createdAt])
 }
 
 model VerificationRequest {
@@ -286,6 +409,10 @@ model VerificationRequest {
 
   @@index([workerId])
   @@index([status])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([status, createdAt])
+  @@index([requestedById])
+  @@index([reviewedById])
 }
 
 model AuditLog {
@@ -301,6 +428,10 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+  // ── Issue #1813: additional indexes for audit queries ──
+  @@index([userId, createdAt])
+  @@index([resource, resourceId])
+  @@index([action, createdAt])
 }
 
 // ─── Issue #329: Worker Response Time Tracking ───────────────────────────────
@@ -318,6 +449,11 @@ model ContactRequest {
   fromUser    User                 @relation(fields: [fromUserId], references: [id], onDelete: Cascade)
 
   @@index([workerId])
+  @@index([workerId, status])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([fromUserId])
+  @@index([workerId, createdAt])
+  @@index([status, createdAt])
 }
 
 // ─── Issue #331: Worker Insurance Verification ───────────────────────────────
@@ -336,6 +472,9 @@ model InsuranceDocument {
 
   @@index([workerId])
   @@index([expiresAt])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([status])
+  @@index([status, expiresAt])
 }
 
 // ─── Issue #332: Referral System ─────────────────────────────────────────────
@@ -354,86 +493,124 @@ model Referral {
 
   @@index([referrerId])
   @@index([code])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([status])
+  @@index([referrerId, status])
+  @@index([createdAt])
 }
 
 model Job {
-  id            String        @id @default(cuid())
-  title         String
-  description   String
-  budget        Float?
+  id           String           @id @default(cuid())
+  title        String
+  description  String
+  budget       Float?
   /// Required skills as a plain string array (e.g. ["plumbing","pipe fitting"])
-  skills        String[]      @default([])
-  urgency       JobUrgency    @default(normal)
+  skills       String[]         @default([])
+  urgency      JobUrgency       @default(normal)
   /// Amount held in escrow (Stellar XLM)
-  escrowAmount  Float?
+  escrowAmount Float?
   /// Stellar escrow transaction/contract reference
-  escrowTxId    String?
-  categoryId    String
-  category      Category      @relation(fields: [categoryId], references: [id])
-  locationId    String?
-  location      Location?     @relation(fields: [locationId], references: [id])
-  postedById    String
-  postedBy      User          @relation("JobsPosted", fields: [postedById], references: [id])
-  status        JobStatus     @default(open)
-  expiresAt     DateTime?
-  renewedAt     DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  applications  JobApplication[]
-  messages      JobMessage[]
+  escrowTxId   String?
+  categoryId   String
+  category     Category         @relation(fields: [categoryId], references: [id])
+  locationId   String?
+  location     Location?        @relation(fields: [locationId], references: [id])
+  postedById   String
+  postedBy     User             @relation("JobsPosted", fields: [postedById], references: [id])
+  status       JobStatus        @default(open)
+  expiresAt    DateTime?
+  renewedAt    DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  applications JobApplication[]
+  messages     JobMessage[]
 
   @@index([status])
   @@index([categoryId])
   @@index([postedById])
   @@index([expiresAt])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([status, createdAt])
+  @@index([status, expiresAt])
+  @@index([categoryId, status])
+  @@index([locationId])
+  @@index([postedById, status])
+  @@index([postedById, createdAt])
+  @@index([urgency])
+  @@index([createdAt])
 }
 
 model JobApplication {
-  id          String            @id @default(cuid())
-  jobId       String
-  job         Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  workerId    String
-  worker      Worker            @relation(fields: [workerId], references: [id], onDelete: Cascade)
-  coverLetter String?
+  id           String            @id @default(cuid())
+  jobId        String
+  job          Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workerId     String
+  worker       Worker            @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  coverLetter  String?
   proposedRate Float?
-  status      ApplicationStatus @default(pending)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  status       ApplicationStatus @default(pending)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
   @@unique([jobId, workerId])
   @@index([jobId])
   @@index([workerId])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([jobId, status])
+  @@index([workerId, status])
+  @@index([status, createdAt])
 }
 
 // ─── Issue #687: Job messaging between poster and applicant ──────────────────
 
 model JobMessage {
-  id         String   @id @default(cuid())
-  jobId      String
-  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  senderId   String
-  sender     User     @relation("JobMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User      @relation("JobMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
   recipientId String
-  recipient  User     @relation("JobMessagesReceived", fields: [recipientId], references: [id], onDelete: Cascade)
-  body       String
-  readAt     DateTime?
-  createdAt  DateTime @default(now())
+  recipient   User      @relation("JobMessagesReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  body        String
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([jobId])
   @@index([senderId])
   @@index([recipientId])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([jobId, createdAt])
+  @@index([recipientId, readAt])
+  @@index([recipientId, createdAt])
 }
 
 // ─── Issue #analytics: Advanced Analytics & Reporting ────────────────────────
 
 model ProfileView {
-  id        String   @id @default(cuid())
-  workerId  String
-  ip        String
-  viewedAt  DateTime @default(now())
-  worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  id       String   @id @default(cuid())
+  workerId String
+  /// @encrypted — PII (Medium sensitivity; retained 30 days then truncated)
+  ip       String
+  viewedAt DateTime @default(now())
+  worker   Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
 
   @@index([workerId, ip, viewedAt])
+  // ── Issue #1813: index for time-range analytics ──
+  @@index([workerId, viewedAt])
+  @@index([viewedAt])
+}
+
+model WorkerTipEvent {
+  id        String   @id @default(cuid())
+  workerId  String
+  amount    Float
+  txHash    String?
+  createdAt DateTime @default(now())
+  worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+
+  @@index([workerId, createdAt])
+  // ── Issue #1813: index for tx lookups ──
+  @@index([txHash])
 }
 
 model WorkerAnalytics {
@@ -458,11 +635,14 @@ model SearchAnalytics {
   query        String
   resultsCount Int      @default(0)
   hasFilters   Boolean  @default(false)
+  /// @encrypted — PII (Medium sensitivity; retained 30 days then truncated)
   ipAddress    String?
   createdAt    DateTime @default(now())
 
   @@index([query])
   @@index([createdAt])
+  // ── Issue #1813: index for filtered search analytics ──
+  @@index([hasFilters, createdAt])
 }
 
 // ─── Issue #511: Refresh Token Rotation ──────────────────────────────────────
@@ -478,6 +658,9 @@ model RefreshToken {
 
   @@index([userId])
   @@index([tokenHash])
+  // ── Issue #1813: indexes for token cleanup/validation ──
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 // ─── Issue #517: Idempotency Keys ────────────────────────────────────────────
@@ -493,26 +676,29 @@ model IdempotencyKey {
 
   @@unique([key, userId])
   @@index([expiresAt])
+  // ── Issue #1813: index for user-scoped lookups ──
+  @@index([userId])
 }
 
 // ─── Issue #751: On-Chain Event Indexer Service ───────────────────────────────
 
 model ContractEvent {
-  id            String   @id @default(cuid())
-  contractId    String
-  eventName     String
-  ledger        BigInt
-  txIndex       Int
-  eventIndex    Int
-  indexed       Json     // Array of indexed parameters
-  data          Json?    // Additional event data
-  processedAt   DateTime @default(now())
-  createdAt     DateTime @default(now())
+  id          String   @id @default(cuid())
+  contractId  String
+  eventName   String
+  ledger      BigInt
+  txIndex     Int
+  eventIndex  Int
+  indexed     Json // Array of indexed parameters
+  data        Json? // Additional event data
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@unique([contractId, ledger, txIndex, eventIndex])
   @@index([contractId])
+  @@index([contractId, eventName])
+  @@index([contractId, eventName, ledger])
   @@index([ledger])
-  @@index([eventName])
   @@index([createdAt])
 }
 
@@ -538,6 +724,8 @@ model StellarAccount {
   updatedAt    DateTime  @updatedAt
 
   @@index([userId])
+  // ── Issue #1813: index for sync scheduling ──
+  @@index([lastSyncedAt])
 }
 
 // ─── Issue #771: Secure File Upload & Media Pipeline ─────────────────────────
@@ -557,45 +745,57 @@ model MediaAsset {
   createdAt    DateTime @default(now())
 
   @@index([uploadedById])
+  // ── Issue #1813: index for time-sorted media listing ──
+  @@index([createdAt])
 }
 
 // ─── Issue #755: Escrow Orchestration ────────────────────────────────────────
 
 model EscrowRecord {
-  id            String        @id @default(cuid())
-  jobId         String?
-  payerId       String
-  payeeId       String
-  amountXlm     Float
-  status        EscrowStatus  @default(pending)
-  txId          String?       // Stellar transaction / contract reference
-  expiresAt     DateTime
-  releasedAt    DateTime?
-  cancelledAt   DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  disputes      EscrowDispute[]
+  id          String          @id @default(cuid())
+  jobId       String?
+  payerId     String
+  payeeId     String
+  amountXlm   Float
+  status      EscrowStatus    @default(pending)
+  txId        String? // Stellar transaction / contract reference
+  expiresAt   DateTime
+  releasedAt  DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  disputes    EscrowDispute[]
 
   @@index([payerId])
   @@index([payeeId])
   @@index([status])
+  @@index([payerId, status])
+  @@index([payeeId, status])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([jobId])
+  @@index([txId])
+  @@index([status, expiresAt])
+  @@index([createdAt])
 }
 
 model EscrowDispute {
-  id          String              @id @default(cuid())
-  escrowId    String
-  escrow      EscrowRecord        @relation(fields: [escrowId], references: [id], onDelete: Cascade)
-  filedById   String
-  reason      String
-  evidence    String?
-  status      EscrowDisputeStatus @default(open)
-  resolution  String?
-  resolvedAt  DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id         String              @id @default(cuid())
+  escrowId   String
+  escrow     EscrowRecord        @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+  filedById  String
+  reason     String
+  evidence   String?
+  status     EscrowDisputeStatus @default(open)
+  resolution String?
+  resolvedAt DateTime?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
 
   @@index([escrowId])
   @@index([status])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([filedById])
+  @@index([status, createdAt])
 }
 
 enum EscrowStatus {
@@ -693,14 +893,14 @@ enum ReferralStatus {
 }
 
 model NotificationPreferences {
-  id                String  @id @default(cuid())
-  userId            String  @unique
-  newWorkerNearby   Boolean @default(true)
-  statusChange      Boolean @default(true)
-  reviewReply       Boolean @default(true)
-  announcements     Boolean @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  newWorkerNearby Boolean  @default(true)
+  statusChange    Boolean  @default(true)
+  reviewReply     Boolean  @default(true)
+  announcements   Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -708,18 +908,22 @@ model NotificationPreferences {
 // ─── Issue #notification: In-App Notifications ──────────────────────────────
 
 model Notification {
-  id        String   @id @default(cuid())
+  id        String           @id @default(cuid())
   userId    String
   type      NotificationType
   title     String
   message   String?
   href      String?
-  read      Boolean  @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, read])
   @@index([userId, createdAt])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([userId, read, createdAt])
+  @@index([userId, type])
+  @@index([createdAt])
 }
 
 enum NotificationType {
@@ -741,17 +945,27 @@ model ReviewHelpful {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([reviewId, userId])
+  @@index([reviewId])
+  // ── Issue #1813: index for user vote lookups ──
+  @@index([userId])
 }
 
 // ─── Issue #messaging: Conversations & Messages ─────────────────────────────
 
 model Conversation {
-  id           String                     @id @default(cuid())
+  id           String                    @id @default(cuid())
   subject      String?
-  createdAt    DateTime                   @default(now())
-  updatedAt    DateTime                   @updatedAt
+  initiatorId  String?
+  initiator    User?                     @relation("ConversationInitiator", fields: [initiatorId], references: [id])
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
   participants ConversationParticipant[]
   messages     Message[]
+
+  // ── Issue #1813: indexes for conversation listing ──
+  @@index([initiatorId])
+  @@index([updatedAt])
+  @@index([createdAt])
 }
 
 model ConversationParticipant {
@@ -764,6 +978,10 @@ model ConversationParticipant {
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, userId])
+  @@index([userId])
+  // ── Issue #1813: index for conversation participant fetch ──
+  @@index([conversationId])
+  @@index([userId, lastReadAt])
 }
 
 model Message {
@@ -779,21 +997,22 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
 
   @@index([conversationId, createdAt])
+  // ── Issue #1813: additional indexes for common filters/sorts ──
+  @@index([senderId])
+  @@index([conversationId, readAt])
 }
 
-// ─── Issue #749: Device & Session Management ─────────────────────────────────
+// ── Booking models — Issue #776 ───────────────────────────────────────────────
 
-model Device {
-  id            String    @id @default(cuid())
-  userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceName    String    // e.g., "Chrome on MacOS", "Firefox on Windows"
-  userAgent     String?
-  ipAddress     String
-  lastUsedAt    DateTime  @updatedAt
-  createdAt     DateTime  @default(now())
-  revokedAt     DateTime?
-
-  @@index([userId])
-  @@index([userId, revokedAt])
-}
+model Booking {
+  id                 String        @id @default(cuid())
+  workerId           String
+  requesterId        String
+  /// ISO 8601 stored as UTC
+  startTime          DateTime
+  /// ISO 8601 stored as UTC
+  endTime            DateTime
+  /// IANA timezone name the requester submitted in
+  timezone           String        @default("UTC")
+  serviceDescription String
+  note               String

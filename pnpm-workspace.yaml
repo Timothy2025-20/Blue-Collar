@@ -1,5 +1,102 @@
 packages:
-  - "packages/api"
-  - "packages/app"
-  - "packages/contracts"
-  - "packages/sdk"
+  - 'packages/api'
+  - 'packages/app'
+  - 'packages/contracts'
+  - 'packages/mobile'
+  - 'packages/monitoring'
+  - 'packages/sdk'
+  - 'packages/test-utils'
+  - 'packages/types'
+
+catalog:
+  '@faker-js/faker': ^10.5.0
+  '@types/react': ^18.3.0
+  '@types/react-dom': ^18.3.0
+  '@typescript-eslint/eslint-plugin': ^8.0.0
+  '@typescript-eslint/parser': ^8.0.0
+  '@vitest/coverage-v8': ^3.2.6
+  eslint: ^9.0.0
+  prettier: ^3.5.3
+  react: ^18.3.0
+  react-dom: ^18.3.0
+  typescript: ^5.4.0
+  vitest: ^3.2.6
+  zod: ^3.23.0
+
+overrides:
+  '@babel/core@<=7.29.0': '>=7.29.6 <8'
+  '@faker-js/faker@<=10.4.0': '>=10.5.0 <11'
+  '@grpc/grpc-js@>=1.14.0 <1.14.5': '>=1.14.5 <2'
+  '@hono/node-server@<1.19.15': '>=1.19.15 <2'
+  '@humanfs/node@<0.16.8': '>=0.16.8'
+  '@opentelemetry/core@<2.8.0': '>=2.8.0 <3'
+  '@opentelemetry/instrumentation-cassandra-driver@<0.66.0': '>=0.66.0'
+  '@opentelemetry/instrumentation-knex@<0.65.0': '>=0.65.0'
+  '@opentelemetry/instrumentation-mongoose@<0.67.0': '>=0.67.0'
+  '@opentelemetry/instrumentation-mysql2@<0.67.0': '>=0.67.0'
+  '@opentelemetry/instrumentation-mysql@<0.67.0': '>=0.67.0'
+  '@opentelemetry/instrumentation-pg@<0.73.0': '>=0.73.0'
+  '@opentelemetry/instrumentation-tedious@<0.40.0': '>=0.40.0'
+  '@opentelemetry/propagator-jaeger@<2.9.0': '>=2.9.0 <3'
+  '@storybook/core@>=8.0.0 <8.6.19': '>=8.6.19 <9'
+  '@xmldom/xmldom@<0.8.15': '>=0.8.15'
+  ajv@>=7.0.0-alpha.0 <8.18.0: '>=8.18.0 <9'
+  axios@>=1.0.0 <1.20.0: '>=1.20.0 <2'
+  baseline-browser-mapping@>=2.0.0 <2.11.0: '>=2.11.0 <3'
+  basic-ftp@<=6.2.0: '>=6.2.1 <7'
+  body-parser@<1.20.9: '>=1.20.9 <2'
+  brace-expansion@<1.1.21: '>=1.1.21 <2'
+  'brace-expansion@>=2.0.0 <2.1.7': '>=2.1.7 <3'
+  'brace-expansion@>=3.0.0 <5.0.12': '>=5.0.12 <6'
+  browserslist@<=4.28.6: '>=4.28.7 <5'
+  compression@<1.8.2: '>=1.8.2 <2'
+  decode-uri-component@<=0.5.0: '>=0.5.1'
+  deepmerge-ts@<8.0.0: '>=8.0.0 <9'
+  defu@<=6.1.4: '>=6.1.5 <7'
+  effect@<=3.22.0: '>=3.22.1 <4'
+  engine.io@>=6.6.0 <6.6.10: '>=6.6.10 <7'
+  'esbuild@<=0.24.2': '>=0.25.0'
+  'esbuild@>=0.27.3 <0.28.1': '>=0.28.1'
+  'fast-copy@>=4.0.0 <4.1.0': '>=4.1.0 <5'
+  'fast-uri@>=3.0.0 <3.1.8': '>=3.1.8 <4'
+  follow-redirects@<=1.16.1: '>=1.16.2 <2'
+  'form-data@>=4.0.0 <4.0.6': '>=4.0.6 <5'
+  'glob@>=10.2.0 <10.5.0': '>=10.5.0 <11'
+  hono@<4.13.7: '>=4.13.7 <5'
+  icu-minify@<=4.9.1: '>=4.9.2 <5'
+  'image-size@>=0.6.3 <=2.0.2': '>=2.0.3 <3'
+  ip-address@<10.7.1: '>=10.7.1 <11'
+  joi@<17.13.9: '>=17.13.9 <18'
+  'js-yaml@>=4.0.0 <4.3.2': '>=4.3.2 <5'
+  lodash@<4.18.0: '>=4.18.0 <5'
+  mysql2@<=3.23.0: '>=3.23.1 <4'
+  nanoid@<3.3.18: '>=3.3.18 <4'
+  next-intl@<=4.9.1: '>=4.9.2 <5'
+  'next@>=9.5.0 <=15.5.27': '>=15.5.28 <16'
+  'node-forge@<=1.4.0': '>=1.4.1 <2'
+  nodemailer@<10.0.6: '>=10.0.6 <11'
+  path-to-regexp@<0.1.13: '>=0.1.13'
+  pbkdf2@<=3.1.6: '>=3.1.7 <4'
+  postcss-selector-parser@<7.1.6: '>=7.1.6 <8'
+  postcss@<=8.5.22: '>=8.5.23 <9'
+  protobufjs@<=7.6.4: '>=7.6.5 <8'
+  'protobufjs@>=8.0.0 <=8.4.0': '>=8.4.1 <9'
+  proxy-addr@>=1.1.0 <2.0.8: '>=2.0.8 <3'
+  'qs@>=2.2.5 <6.16.0': '>=6.16.0 <7'
+  sharp@<0.35.5: '>=0.35.5'
+  shell-quote@<1.11.0: '>=1.11.0 <2'
+  'source-map-js@>=1.0.0 <1.2.2': '>=1.2.2 <2'
+  storybook@>=8.0.0 <8.6.19: '>=8.6.19 <9'
+  tar@<=7.5.20: '>=7.5.21 <8'
+  tinypool@<2.1.2: '>=2.1.2 <3'
+  tmp@<0.2.6: '>=0.2.6'
+  toml@<=5.0.0: '>=5.0.1 <6'
+  turbo-stream@<3.0.0: '>=3.0.0 <4'
+  undici@>=4.0.0 <6.29.1: '>=6.29.1 <7'
+  uuid@<11.1.1: '>=11.1.1 <12'
+  valibot@<=1.4.1: '>=1.4.2 <2'
+  vite@<=6.4.3: '>=6.4.4'
+  'vite@>=8.3.0 <=8.3.2': '>=8.3.3'
+  vitest@<3.2.6: '>=3.2.6 <4'
+  webpack-dev-middleware@<7.4.5: '>=7.4.6 <8'
+  'ws@>=8.0.0 <8.21.0': '>=8.21.0 <9'

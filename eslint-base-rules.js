@@ -1,0 +1,222 @@
+/**
+ * Shared ESLint rule set — single source of truth for all packages.
+ *
+ * Each package's ESLint config imports this module and spreads the rules so
+ * that every package enforces the same baseline, with only intentional
+ * per-package overrides on top.
+ *
+ * Two ESLint generations coexist in this monorepo:
+ *   • ESLint 9 flat config  (packages/api, sdk, types) — imports as plain object
+ *   • ESLint 8 legacy       (packages/app, mobile)
+ *     — consumed via .eslintrc.js `rules:` spread
+ *
+ * When the whole monorepo is migrated to ESLint 9 flat config this file can
+ * be converted to a proper shared flat-config preset.
+ */
+
+/**
+ * Documented per-package exceptions to the shared baseline. Anything not
+ * listed here must match the baseline exactly.
+ *
+ *   packages/app     no-console allows warn/error (client-side code)
+ *   packages/mobile  no-console is 'warn' (React Native debugging)
+ *   packages/api     no-console off for seed, command, script, monitoring and test files
+ *   packages/sdk     no-console off and no-explicit-any 'warn' in src/__tests__
+ *   packages/types   no-console off and no-explicit-any 'warn' in test files
+ *   packages/*       no-deprecated requires type info; see per-package configs
+ *
+ * Shared baseline expectations (#1797, #1798):
+ *   • Debug output must go through the shared logger, never `console.*`.
+ *     The logger implementation itself (e.g. `lib/logger.ts`) is the only
+ *     place allowed to touch `console`; it is exempted per-package via a
+ *     targeted `no-console` override rather than by weakening the baseline.
+ *   • User-facing strings must live in locale files, not inline literals.
+ *     Packages adopt the shared `i18nRules` below (see #1797) so the same
+ *     literal-string rule is enforced everywhere.
+ */
+
+'use strict';
+
+/**
+ * TypeScript-specific rules applied to all *.ts / *.tsx source files.
+ * These are the rules that were duplicated across packages before #1289.
+ */
+const tsRules = {
+  '@typescript-eslint/no-unused-vars': [
+    'warn',
+    { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+  ],
+  '@typescript-eslint/no-explicit-any': 'error',
+  '@typescript-eslint/explicit-function-return-type': 'off',
+};
+
+/**
+ * General rules that apply to every JS/TS file.
+ */
+const baseRules = {
+  'no-debugger': 'error',
+};
+
+/**
+ * Rules that apply to production code but NOT to scripts / seed files / tests.
+ */
+const productionOnlyRules = {
+  'no-console': 'error',
+};
+
+/**
+ * File naming convention rules enforcing kebab-case (#1691).
+ */
+const filenameRules = {
+  'unicorn/filename-case': [
+    'error',
+    {
+      case: 'kebabCase',
+      ignore: [
+        '^[A-Z][a-zA-Z0-9]*\\.tsx$',
+        '^use[A-Z][a-zA-Z0-9]*\\.(ts|tsx)$',
+        '^(page|layout|error|loading|not-found|robots|sitemap|middleware)\\.(ts|tsx)$',
+        '\\.(test|spec)\\.(ts|tsx)$',
+        '\\.stories\\.tsx$',
+        '\\.d\\.ts$',
+        '^index\\.(ts|tsx)$',
+        '^[a-z]+\\.(ts|tsx)$',
+      ],
+    },
+  ],
+};
+
+/**
+ * Deprecation detection (#1688).
+ *
+ * Flags usage of anything marked with a JSDoc `@deprecated` tag —
+ * TypeScript/Stellar SDK APIs, React ecosystem APIs, or our own code.
+ *
+ * Uses the built-in `@typescript-eslint/no-deprecated` rule (replaces the
+ * now-superseded `eslint-plugin-deprecation` [citation:1][citation:4]).
+ *
+ * Requires type information: `parserOptions.project` (or `projectService`)
+ * must be configured in every package that spreads these rules.
+ *
+ * Auto-disable for a specific line (with justification):
+ *   // eslint-disable-next-line @typescript-eslint/no-deprecated -- <reason>
+ *
+ * See CONTRIBUTING.md § Deprecation Exceptions.
+ */
+const deprecationRules = {
+  '@typescript-eslint/no-deprecated': 'error',
+};
+
+/**
+ * Hardcoded i18n string detection (#1797).
+ *
+ * Flags inline user-facing string literals so they are moved into locale
+ * files. Packages opt in by spreading `i18nRules` into their config; the
+ * rule is intentionally not part of `baseRules` yet so that packages can
+ * migrate incrementally without changing existing rule behavior.
+ *
+ * Auto-disable for a specific line (with justification):
+ *   // eslint-disable-next-line i18next/no-literal-string -- <reason>
+ */
+const i18nRules = {
+  'i18next/no-literal-string': [
+    'warn',
+    {
+      mode: 'jsx-text-only',
+      'should-validate-template': true,
+    },
+  ],
+};
+
+const importRules = {
+  'no-restricted-imports': [
+    'warn',
+    {
+      patterns: [
+        {
+          group: ['../../**'],
+          message: 'Use the "@/..." path alias instead of a deep relative import (issue #1888).',
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * Import ordering and cycle detection rules (#1893).
+ *
+ * Enforces consistent import ordering and detects circular dependencies.
+ * Requires eslint-plugin-import (ESLint 8) or eslint-plugin-import-x (ESLint 9)
+ * to be installed in the consuming package.
+ *
+ * ESLint 9 flat config packages (api, sdk, types) use eslint-plugin-import-x.
+ * ESLint 8 legacy packages (app, mobile) use eslint-plugin-import.
+ *
+ * Import group order:
+ *   1. Node built-ins (node:*)
+ *   2. External packages (npm)
+ *   3. Workspace packages (@bluecollar/*)
+ *   4. Internal aliases (@/*)
+ *   5. Relative imports (./)
+ *
+ * Auto-disable for a justified circular dep:
+ *   // eslint-disable-next-line import/no-cycle -- <reason>
+ */
+const importRules = {
+  'import/no-cycle': ['error', { maxDepth: 5, ignoreExternal: true }],
+  'import/order': [
+    'warn',
+    {
+      groups: [
+        'builtin',
+        'external',
+        'internal',
+        'parent',
+        'sibling',
+        'index',
+        'object',
+        'type',
+      ],
+      pathGroups: [
+        {
+          pattern: '@bluecollar/**',
+          group: 'internal',
+          position: 'before',
+        },
+        {
+          pattern: '@/**',
+          group: 'internal',
+          position: 'after',
+        },
+      ],
+      pathGroupsExcludedImportTypes: ['builtin'],
+      'newlines-between': 'ignore',
+      alphabetize: { order: 'asc', caseInsensitive: true },
+    },
+  ],
+}
+
+/**
+ * Consistent type definitions (#1895).
+ *
+ * Enforces `interface` for object shapes and disallows `type Foo = { ... }`
+ * object alias declarations. Union types, mapped types, and conditional types
+ * are unaffected because the rule only applies to object-literal shapes.
+ *
+ * To use a type alias for a shape deliberately (e.g., Partial<X>, Pick<X, K>),
+ * add: // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- <reason>
+ */
+const typeDefinitionRules = {
+  '@typescript-eslint/consistent-type-definitions': ['error', 'interface'],
+}
+
+module.exports = {
+  tsRules,
+  baseRules,
+  productionOnlyRules,
+  filenameRules,
+  deprecationRules,
+  i18nRules,
+  importRules,
+  typeDefinitionRules,
+}

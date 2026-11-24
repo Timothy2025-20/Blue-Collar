@@ -4,38 +4,33 @@ import { forwardRef, ButtonHTMLAttributes, ReactNode } from "react";
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
-  "aria-label"?: string;
-  "aria-labelledby"?: string;
+  /** Required: icon-only controls must have an accessible name. Pass a translated label. */
+  "aria-label": string;
 }
 
+/**
+ * Icon-only button.
+ *
+ * This component intentionally contains no hardcoded user-facing strings.
+ * Callers MUST pass a translated `aria-label` (e.g. via `useTranslations`/`t(...)`)
+ * so that icon-only controls have an accessible, localized name.
+ */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   function IconButton(
     {
       children,
       className = "",
       "aria-label": ariaLabel,
-      "aria-labelledby": ariaLabelledby,
       type = "button",
       ...rest
     },
     ref
   ) {
-    if (
-      process.env.NODE_ENV === "development" &&
-      !ariaLabel &&
-      !ariaLabelledby
-    ) {
-      console.warn(
-        "[IconButton] Supply aria-label or aria-labelledby for accessibility."
-      );
-    }
-
     return (
       <button
         ref={ref}
         type={type}
         aria-label={ariaLabel}
-        aria-labelledby={ariaLabelledby}
         className={`
           inline-flex items-center justify-center
           min-h-[44px] min-w-[44px] rounded-md

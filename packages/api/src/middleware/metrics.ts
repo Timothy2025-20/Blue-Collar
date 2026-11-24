@@ -1,214 +1,271 @@
 import { Request, Response, NextFunction } from 'express';
-import * as promClient from 'prom-client';
+import client from 'prom-client';
 
-// HTTP Metrics
-const httpRequestDuration = new promClient.Histogram({
+// Create a Registry
+const register = new client.Registry();
+
+// Default metrics (Node.js performance)
+client.collectDefaultMetrics({ register });
+
+// Custom metrics
+export const httpRequestDuration = new client.Histogram({
   name: 'http_request_duration_seconds',
   help: 'Duration of HTTP requests in seconds',
   labelNames: ['method', 'route', 'status_code'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  buckets: [0.1, 0.3, 0.5, 1, 2, 5, 10],
+  registers: [register],
 });
 
-const httpRequestTotal = new promClient.Counter({
+export const httpRequestsTotal = new client.Counter({
   name: 'http_requests_total',
   help: 'Total number of HTTP requests',
   labelNames: ['method', 'route', 'status_code'],
+  registers: [register],
 });
 
-const httpRequestSize = new promClient.Histogram({
+export const httpRequestErrors = new client.Counter({
+  name: 'http_request_errors_total',
+  help: 'Total number of HTTP request errors',
+  labelNames: ['method', 'route', 'status_code'],
+  registers: [register],
+});
+
+export const activeRequests = new client.Gauge({
+  name: 'http_active_requests',
+  help: 'Number of active HTTP requests',
+  registers: [register],
+});
+
+export const requestSize = new client.Summary({
   name: 'http_request_size_bytes',
   help: 'Size of HTTP requests in bytes',
   labelNames: ['method', 'route'],
-  buckets: [100, 1000, 10000, 100000, 1000000],
+  percentiles: [0.5, 0.9, 0.95, 0.99],
+  registers: [register],
 });
 
-const httpResponseSize = new promClient.Histogram({
+export const responseSize = new client.Summary({
   name: 'http_response_size_bytes',
   help: 'Size of HTTP responses in bytes',
   labelNames: ['method', 'route', 'status_code'],
-  buckets: [100, 1000, 10000, 100000, 1000000],
+  percentiles: [0.5, 0.9, 0.95, 0.99],
+  registers: [register],
 });
 
-// Database Metrics
-const dbQueryDuration = new promClient.Histogram({
-  name: 'db_query_duration_seconds',
-  help: 'Duration of database queries in seconds',
-  labelNames: ['operation', 'table'],
-  buckets: [0.001, 0.01, 0.05, 0.1, 0.5, 1],
-});
+// Metrics middleware
+export const metricsMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  // Skip metrics endpoint itself
+  if (req.path === '/metrics') {
+    return next();
+  }
 
-const dbQueryTotal = new promClient.Counter({
-  name: 'db_queries_total',
-  help: 'Total database queries',
-  labelNames: ['operation', 'table', 'status'],
-});
+  // Increment active requests
+  activeRequests.inc();
 
-const activeConnections = new promClient.Gauge({
-  name: 'active_connections',
-  help: 'Number of active database connections',
-});
+  // Track request size
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  requestSize.observe({ method: req.method, route: req.route?.path || req.path }, contentLength);
 
-// Business Metrics
-const workerRegistrations = new promClient.Counter({
-  name: 'bluecollar_worker_registrations_total',
-  help: 'Total worker registrations',
-  labelNames: ['category', 'status'],
-});
-
-const activeWorkers = new promClient.Gauge({
-  name: 'bluecollar_workers_active',
-  help: 'Number of active workers',
-});
-
-const tipsTotal = new promClient.Counter({
-  name: 'bluecollar_tips_total',
-  help: 'Total tips/payments sent',
-  labelNames: ['currency'],
-});
-
-const tipValueUsd = new promClient.Counter({
-  name: 'bluecollar_tips_value_usd_total',
-  help: 'Total tips/payments value in USD',
-  labelNames: ['currency'],
-});
-
-const usersTotal = new promClient.Gauge({
-  name: 'bluecollar_users_total',
-  help: 'Total users',
-  labelNames: ['role'],
-});
-
-const usersVerified = new promClient.Gauge({
-  name: 'bluecollar_users_verified',
-  help: 'Total verified users',
-  labelNames: ['role'],
-});
-
-const reviewsTotal = new promClient.Counter({
-  name: 'bluecollar_reviews_total',
-  help: 'Total reviews created',
-});
-
-const reviewsAvgRating = new promClient.Gauge({
-  name: 'bluecollar_reviews_avg_rating',
-  help: 'Average review rating',
-  labelNames: ['category'],
-});
-
-// Contract Metrics
-const contractRegistrations = new promClient.Counter({
-  name: 'bluecollar_contract_registrations_total',
-  help: 'Total contract registration attempts',
-  labelNames: ['status'],
-});
-
-const contractTransactions = new promClient.Counter({
-  name: 'bluecollar_contract_transactions_total',
-  help: 'Total contract transactions',
-  labelNames: ['type', 'status'],
-});
-
-const contractGasUsed = new promClient.Histogram({
-  name: 'bluecollar_contract_gas_used',
-  help: 'Gas used per contract transaction',
-  labelNames: ['type'],
-  buckets: [10000, 50000, 100000, 500000, 1000000],
-});
-
-// Cache Metrics
-const cacheHits = new promClient.Counter({
-  name: 'cache_hits_total',
-  help: 'Total cache hits',
-  labelNames: ['cache_name'],
-});
-
-const cacheMisses = new promClient.Counter({
-  name: 'cache_misses_total',
-  help: 'Total cache misses',
-  labelNames: ['cache_name'],
-});
-
-// Middleware to track HTTP requests
-export function metricsMiddleware(req: Request, res: Response, next: NextFunction) {
   const start = Date.now();
-  const requestSize = parseInt(req.headers['content-length'] || '0', 10);
 
-  res.on('finish', () => {
+  // Capture response
+  const originalSend = res.send;
+  res.send = function(body: unknown): Response {
     const duration = (Date.now() - start) / 1000;
     const route = req.route?.path || req.path;
-    const statusCode = res.statusCode;
-    const responseSize = parseInt(res.getHeader('content-length') as string || '0', 10);
+    const statusCode = res.statusCode.toString();
+    const method = req.method;
 
-    httpRequestDuration.labels(req.method, route, statusCode).observe(duration);
-    httpRequestTotal.labels(req.method, route, statusCode).inc();
-    httpRequestSize.labels(req.method, route).observe(requestSize);
-    httpResponseSize.labels(req.method, route, statusCode).observe(responseSize);
-  });
+    // Record metrics
+    httpRequestDuration.observe({ method, route, status_code: statusCode }, duration);
+    httpRequestsTotal.inc({ method, route, status_code: statusCode });
+
+    // Track errors
+    if (res.statusCode >= 400) {
+      httpRequestErrors.inc({ method, route, status_code: statusCode });
+    }
+
+    // Track response size
+    const responseSizeBytes = Buffer.byteLength(JSON.stringify(body) || '', 'utf8');
+    responseSize.observe({ method, route, status_code: statusCode }, responseSizeBytes);
+
+    // Decrement active requests
+    activeRequests.dec();
+
+    return originalSend.call(this, body);
+  };
 
   next();
+};
+
+// Metrics endpoint
+export const metricsHandler = async (req: Request, res: Response) => {
+  res.set('Content-Type', register.contentType);
+  res.send(await register.metrics());
+};
+
+// Custom metrics for business logic
+export const businessMetrics = {
+  // Queue metrics
+  queueSize: new client.Gauge({
+    name: 'queue_size',
+    help: 'Current queue size',
+    labelNames: ['queue_name'],
+    registers: [register],
+  }),
+
+  queueProcessingDuration: new client.Histogram({
+    name: 'queue_processing_duration_seconds',
+    help: 'Duration of queue processing in seconds',
+    labelNames: ['queue_name', 'status'],
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 30],
+    registers: [register],
+  }),
+
+  // Database metrics
+  dbQueryDuration: new client.Histogram({
+    name: 'db_query_duration_seconds',
+    help: 'Duration of database queries in seconds',
+    labelNames: ['operation', 'table'],
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5],
+    registers: [register],
+  }),
+
+  dbConnections: new client.Gauge({
+    name: 'db_connections',
+    help: 'Number of database connections',
+    registers: [register],
+  }),
+
+  // Blockchain metrics
+  blockHeight: new client.Gauge({
+    name: 'blockchain_block_height',
+    help: 'Current blockchain block height',
+    labelNames: ['network'],
+    registers: [register],
+  }),
+
+  contractCalls: new client.Counter({
+    name: 'contract_calls_total',
+    help: 'Total number of contract calls',
+    labelNames: ['contract', 'method', 'status'],
+    registers: [register],
+  }),
+
+  // Worker metrics
+  workerActive: new client.Gauge({
+    name: 'worker_active',
+    help: 'Number of active workers',
+    labelNames: ['worker_type'],
+    registers: [register],
+  }),
+
+  workerJobDuration: new client.Histogram({
+    name: 'worker_job_duration_seconds',
+    help: 'Duration of worker jobs in seconds',
+    labelNames: ['job_type', 'status'],
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60],
+    registers: [register],
+  }),
+};
+
+// Business event metrics
+const workerRegistrationsTotal = new client.Counter({
+  name: 'worker_registrations_total',
+  help: 'Total number of worker registrations',
+  labelNames: ['category', 'status'],
+  registers: [register],
+});
+
+const usersTotalGauge = new client.Gauge({
+  name: 'users_total',
+  help: 'Total number of users',
+  labelNames: ['role'],
+  registers: [register],
+});
+
+const usersVerifiedGauge = new client.Gauge({
+  name: 'users_verified_total',
+  help: 'Total number of verified users',
+  labelNames: ['role'],
+  registers: [register],
+});
+
+const tipsTotal = new client.Counter({
+  name: 'tips_total',
+  help: 'Total number of tips',
+  labelNames: ['currency', 'status'],
+  registers: [register],
+});
+
+const tipAmount = new client.Histogram({
+  name: 'tip_amount',
+  help: 'Value of tips',
+  labelNames: ['currency'],
+  buckets: [0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000],
+  registers: [register],
+});
+
+const tipUsdValue = new client.Histogram({
+  name: 'tip_usd_value',
+  help: 'USD value of tips',
+  labelNames: ['currency'],
+  buckets: [0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000],
+  registers: [register],
+});
+
+const reviewRating = new client.Histogram({
+  name: 'review_rating',
+  help: 'Rating submitted in reviews',
+  labelNames: ['category'],
+  buckets: [1, 2, 3, 4, 5],
+  registers: [register],
+});
+
+const contractGasUsed = new client.Histogram({
+  name: 'contract_gas_used',
+  help: 'Gas used by contract transactions',
+  labelNames: ['type'],
+  buckets: [100, 500, 1000, 5000, 10000, 50000, 100000],
+  registers: [register],
+});
+
+export function recordWorkerRegistration(category: string, status: string): void {
+  workerRegistrationsTotal.inc({ category, status });
 }
 
-// Endpoint to expose metrics
-export function metricsEndpoint(req: Request, res: Response) {
-  res.set('Content-Type', promClient.register.contentType);
-  res.end(promClient.register.metrics());
+export function setActiveWorkers(count: number): void {
+  businessMetrics.workerActive.set({ worker_type: 'all' }, count);
 }
 
-// Database query tracking
-export function trackDbQuery(operation: string, table: string, duration: number, status: string = 'success') {
-  dbQueryDuration.labels(operation, table).observe(duration / 1000);
-  dbQueryTotal.labels(operation, table, status).inc();
+export function recordTip(amount: number, currency: string, usdValue: number): void {
+  tipsTotal.inc({ currency, status: 'success' });
+  tipAmount.observe({ currency }, amount);
+  tipUsdValue.observe({ currency }, usdValue);
 }
 
-export function setActiveConnections(count: number) {
-  activeConnections.set(count);
+export function setUsersTotal(count: number, role: string): void {
+  usersTotalGauge.set({ role }, count);
 }
 
-// Business metrics recording
-export function recordWorkerRegistration(category: string, status: string = 'success') {
-  workerRegistrations.labels(category, status).inc();
+export function setUsersVerified(count: number, role: string): void {
+  usersVerifiedGauge.set({ role }, count);
 }
 
-export function setActiveWorkers(count: number) {
-  activeWorkers.set(count);
+export function recordReview(rating: number, category: string): void {
+  reviewRating.observe({ category }, rating);
 }
 
-export function recordTip(amount: number, currency: string = 'XLM', usdValue: number = 0) {
-  tipsTotal.labels(currency).inc();
-  tipValueUsd.labels(currency).inc(usdValue);
+export function recordContractRegistration(status: string): void {
+  businessMetrics.contractCalls.inc({ contract: 'registry', method: 'register', status });
 }
 
-export function setUsersTotal(count: number, role: string = 'all') {
-  usersTotal.labels(role).set(count);
-}
-
-export function setUsersVerified(count: number, role: string = 'all') {
-  usersVerified.labels(role).set(count);
-}
-
-export function recordReview(rating: number, category: string = 'all') {
-  reviewsTotal.inc();
-  // Update average (requires separate metric tracking)
-}
-
-export function recordContractRegistration(status: string = 'success') {
-  contractRegistrations.labels(status).inc();
-}
-
-export function recordContractTransaction(type: string, status: string = 'success', gasUsed?: number) {
-  contractTransactions.labels(type, status).inc();
-  if (gasUsed) {
-    contractGasUsed.labels(type).observe(gasUsed);
+export function recordContractTransaction(type: string, status: string, gasUsed?: number): void {
+  businessMetrics.contractCalls.inc({ contract: 'transaction', method: type, status });
+  if (gasUsed !== undefined) {
+    contractGasUsed.observe({ type }, gasUsed);
   }
 }
 
-export function recordCacheHit(cacheName: string = 'default') {
-  cacheHits.labels(cacheName).inc();
-}
-
-export function recordCacheMiss(cacheName: string = 'default') {
-  cacheMisses.labels(cacheName).inc();
-}
-
-// Default metrics (CPU, memory, etc.)
-promClient.collectDefaultMetrics();
+// Export register for custom metrics
+export const metricsRegister = register;

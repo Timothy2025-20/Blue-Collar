@@ -1,17 +1,18 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import { db } from '../db.js';
+import { db } from '@/db.js';
+import { config } from '@/config.js';
 
 passport.use(
   new GoogleStrategy(
     {
-      clientID: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      callbackURL: `${process.env.APP_URL || 'http://localhost:3000'}/api/auth/google/callback`,
+      clientID: config.google.clientId,
+      clientSecret: config.google.clientSecret,
+      callbackURL: `${config.appUrl}/api/auth/google/callback`,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        const email = profile.emails?.[0].value;
+        const email = profile.emails?.[0]?.value;
 
         if (!email) {
           return done(new Error('No email found in Google profile'));
@@ -60,8 +61,8 @@ passport.use(
 );
 
 // Passport session setup (if using sessions, but we'll use JWT)
-passport.serializeUser((user: any, done) => {
-  done(null, user.id);
+passport.serializeUser((user: unknown, done) => {
+  done(null, (user as { id: string }).id);
 });
 
 passport.deserializeUser(async (id: string, done) => {

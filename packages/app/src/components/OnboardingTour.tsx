@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { X, ChevronRight, ChevronLeft, Search, Bookmark, Wallet, Star, RotateCcw } from "lucide-react";
+import { useState, useCallback } from "react";
+import { X, ChevronRight, ChevronLeft, Search, Bookmark, Wallet, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useOnboardingState } from "@/hooks/useOnboardingState";
+import { useTranslations } from "next-intl";
 
-const TOUR_KEY = "bc_tour_done";
 
 interface Step {
   icon: React.ReactNode;
@@ -12,61 +13,24 @@ interface Step {
   description: string;
 }
 
-const STEPS: Step[] = [
-  {
-    icon: <Search size={28} className="text-blue-500" />,
-    title: "Find skilled workers",
-    description:
-      "Use the search bar to find tradespeople by name, skill, or location. Filter by category to narrow results.",
-  },
-  {
-    icon: <Bookmark size={28} className="text-blue-500" />,
-    title: "Save your favourites",
-    description:
-      "Tap the bookmark icon on any worker card to save them. Access all your saved workers from the Bookmarks page.",
-  },
-  {
-    icon: <Wallet size={28} className="text-blue-500" />,
-    title: "Pay with Stellar",
-    description:
-      "Connect your Freighter wallet to send instant, low-fee payments directly to workers on the Stellar network.",
-  },
-  {
-    icon: <Star size={28} className="text-blue-500" />,
-    title: "Leave a review",
-    description:
-      "After hiring a worker, leave a rating and comment to help others in the community make informed decisions.",
-  },
-];
-
-interface Props {
-  /** Force the tour to show regardless of localStorage (for restart) */
-  forceShow?: boolean;
-  onClose?: () => void;
-}
-
-export default function OnboardingTour({ forceShow, onClose }: Props) {
-  const [visible, setVisible] = useState(false);
+export default function OnboardingTour() {
+  const t = useTranslations("componentText");
+  const { needsOnboarding, markDone } = useOnboardingState();
   const [step, setStep] = useState(0);
-
-  useEffect(() => {
-    if (forceShow) {
-      setVisible(true);
-      setStep(0);
-      return;
-    }
-    const done = localStorage.getItem(TOUR_KEY);
-    if (!done) setVisible(true);
-  }, [forceShow]);
+  const visible = needsOnboarding;
+  const steps: Step[] = [
+    { icon: <Search size={28} className="text-blue-500" />, title: t("tourFindWorkersTitle"), description: t("tourFindWorkersDescription") },
+    { icon: <Bookmark size={28} className="text-blue-500" />, title: t("tourSaveWorkersTitle"), description: t("tourSaveWorkersDescription") },
+    { icon: <Wallet size={28} className="text-blue-500" />, title: t("tourPayTitle"), description: t("tourPayDescription") },
+    { icon: <Star size={28} className="text-blue-500" />, title: t("tourReviewTitle"), description: t("tourReviewDescription") },
+  ];
 
   const close = useCallback(() => {
-    localStorage.setItem(TOUR_KEY, "1");
-    setVisible(false);
-    onClose?.();
-  }, [onClose]);
+    markDone();
+  }, [markDone]);
 
   const next = () => {
-    if (step < STEPS.length - 1) setStep((s) => s + 1);
+    if (step < steps.length - 1) setStep((s) => s + 1);
     else close();
   };
 
@@ -74,7 +38,8 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
 
   if (!visible) return null;
 
-  const current = STEPS[step];
+  const current = steps[step];
+  if (!current) return null;
 
   return (
     /* Backdrop */
@@ -83,7 +48,7 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
       onClick={close}
       role="dialog"
       aria-modal="true"
-      aria-label="Onboarding tour"
+      aria-label={t("onboardingTour")}
     >
       {/* Card — stop propagation so clicking inside doesn't close */}
       <div
@@ -94,7 +59,7 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
         <button
           type="button"
           onClick={close}
-          aria-label="Skip tour"
+          aria-label={t("skipTour")}
           className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
         >
           <X size={16} />
@@ -113,12 +78,12 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
 
         {/* Dots */}
         <div className="mt-6 flex items-center justify-center gap-1.5">
-          {STEPS.map((_, i) => (
+          {steps.map((_, i) => (
             <button
               key={i}
               type="button"
               onClick={() => setStep(i)}
-              aria-label={`Go to step ${i + 1}`}
+              aria-label={t("goToStep", { step: i + 1 })}
               className={cn(
                 "h-2 rounded-full transition-all",
                 i === step ? "w-5 bg-blue-500" : "w-2 bg-gray-200"
@@ -135,7 +100,7 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
             disabled={step === 0}
             className="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 disabled:opacity-0 transition-colors"
           >
-            <ChevronLeft size={15} /> Back
+            <ChevronLeft size={15} /> {t("back")}
           </button>
 
           <button
@@ -143,44 +108,23 @@ export default function OnboardingTour({ forceShow, onClose }: Props) {
             onClick={next}
             className="flex items-center gap-1 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
           >
-            {step < STEPS.length - 1 ? (
-              <>Next <ChevronRight size={15} /></>
+            {step < steps.length - 1 ? (
+              <>{t("next")} <ChevronRight size={15} /></>
             ) : (
-              "Get started"
+              t("getStarted")
             )}
           </button>
         </div>
 
         {/* Skip link */}
-        {step < STEPS.length - 1 && (
+        {step < steps.length - 1 && (
           <p className="mt-3 text-center text-xs text-gray-400">
             <button type="button" onClick={close} className="hover:underline">
-              Skip tour
+              {t("skipTour")}
             </button>
           </p>
         )}
       </div>
     </div>
-  );
-}
-
-/** Small button to restart the tour — place anywhere in the UI */
-export function RestartTourButton({ className }: { className?: string }) {
-  const [show, setShow] = useState(false);
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setShow(true)}
-        className={cn(
-          "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 transition-colors",
-          className
-        )}
-      >
-        <RotateCcw size={12} /> Restart tour
-      </button>
-      {show && <OnboardingTour forceShow onClose={() => setShow(false)} />}
-    </>
   );
 }

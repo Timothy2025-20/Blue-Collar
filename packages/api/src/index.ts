@@ -4,14 +4,15 @@ import { initializeTracing } from './monitoring/tracing.js'
 initializeTracing()
 
 import express from 'express'
-import cors from 'cors'
-import helmet from 'helmet'
 import { createServer } from 'http'
-import { corsConfig } from './config/cors.js'
+import { securityHeaders, MAX_BODY_SIZE, MAX_URLENCODED_SIZE } from './middleware/security.js'
+import { sanitize, sanitizeParams } from './middleware/sanitize.js'
 import { env } from './config/env.js'
-import pinoHttp from 'pino-http'
 import methodOverride from 'method-override'
+import cors from 'cors'
+import { corsConfig } from './config/cors.js'
 import passport from './config/passport.js'
+import { compress } from './middleware/compress.js'
 import authRoutes from './routes/auth.js'
 import categoryRoutes from './routes/categories.js'
 import workerRoutes from './routes/workers.js'
@@ -19,43 +20,28 @@ import portfolioRoutes from './routes/portfolio.js'
 import reviewRoutes from './routes/reviews.js'
 import subscriptionRoutes from './routes/subscriptions.js'
 import messagesRoutes from './routes/messages.js'
-import { startReminderScheduler } from './services/reminder.service.js'
-import { startHorizonPoller } from './services/horizon-poller.service.js'
+import { startAllJobs, stopAllJobs } from './jobs/index.js'
 import { metricsRecorder } from './monitoring/business-metrics.js'
 import { errorHandler } from './middleware/errorHandler.js'
+import { requestId } from './middleware/requestId.js'
+import { requestLogger } from './middleware/requestLogger.js'
 import { logger } from './config/logger.js'
 import { WebSocketServer } from './websocket/server.js'
+import { createGracefulShutdownHandler } from './utils/shutdown.js'
 
 const app = express()
-const PORT = env.PORT || 3000
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim()).filter(Boolean)
-  : []
-const connectSrc = ["'self'", ...allowedOrigins]
+const PORT = config.port
 
 app.disable('x-powered-by')
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:'],
-      connectSrc,
-    },
-  },
-  hsts: {
-    maxAge: 31_536_000,
-    includeSubDomains: true,
-  },
-  frameguard: { action: 'deny' },
-  noSniff: true,
-}))
+// One header policy for the whole app, shared with app.ts and the security tests (#1827)
+app.use(securityHeaders)
 
+app.use(compress())
 app.use(cors(corsConfig))
-app.use(express.json())
-app.use(express.urlencoded({ extended: true }))
-app.use(pinoHttp())
+app.use(express.json({ limit: MAX_BODY_SIZE }))
+app.use(express.urlencoded({ extended: true, limit: MAX_URLENCODED_SIZE }))
+app.use(requestId)      // generate/propagate X-Request-ID before logging
+app.use(requestLogger)  // structured request logging with request IDs
 app.use(methodOverride('X-HTTP-Method'))
 app.use(passport.initialize())
 
@@ -70,16 +56,20 @@ app.use('/api/messages', messagesRoutes)
 // Global error handler - must be last
 app.use(errorHandler)
 
-if (process.env.NODE_ENV !== 'test') {
+if (config.nodeEnv !== 'test') {
   const httpServer = createServer(app)
   new WebSocketServer(httpServer)
   
-  httpServer.listen(PORT, () => {
-    logger.info(`BlueCollar API running on port ${PORT}`)
-    startReminderScheduler()
-    startHorizonPoller()
+  const server = httpServer.listen(PORT, () => {
+    logger.info({ port: PORT }, 'BlueCollar API running')
+    startAllJobs()
     metricsRecorder.startPeriodicSync()
   })
+
+  // Set up graceful shutdown on SIGTERM and SIGINT (#1642)
+  const shutdownHandler = createGracefulShutdownHandler(server)
+  process.on('SIGTERM', shutdownHandler)
+  process.on('SIGINT', shutdownHandler)
 }
 
 export default app

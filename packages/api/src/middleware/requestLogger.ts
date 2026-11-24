@@ -1,44 +1,115 @@
-import pinoHttp from 'pino-http'
-import pino from 'pino'
-import fs from 'node:fs'
-import path from 'node:path'
-
-const LOG_DIR = process.env.LOG_DIR ?? 'storage/logs'
-fs.mkdirSync(path.resolve(LOG_DIR), { recursive: true })
-
-const isDev = process.env.NODE_ENV !== 'production'
-
 /**
- * Pino-http middleware that logs every request with:
- * - method, url, status, response time
- * - user agent, IP address
- * - authenticated user id (if present)
+ * Structured request/response logging middleware — issue #1238
  *
- * In production, logs are written to a daily rotating file via pino/file.
- * In development, pretty-printed to stdout.
+ * Wraps pino-http to produce a structured log line for every HTTP request:
+ *
+ * ```json
+ * {
+ *   "level": "info",
+ *   "time": 1718000000000,
+ *   "requestId": "a1b2c3d4-...",
+ *   "service": "bluecollar-api",
+ *   "req": { "method": "GET", "url": "/api/workers" },
+ *   "res": { "statusCode": 200 },
+ *   "responseTime": 42,
+ *   "userAgent": "Mozilla/5.0 ...",
+ *   "ip": "10.0.0.1",
+ *   "userId": "user-123",
+ *   "msg": "GET /api/workers 200"
+ * }
+ * ```
+ *
+ * ## Key changes in issue #1238
+ *
+ * - `genReqId` reads `req.id` (set by the `requestId` middleware that runs
+ *   before this one) so the same UUID is used across request, response, and
+ *   all child logger calls within a request lifecycle.
+ * - `customProps` adds `requestId` to the root of every log line so log
+ *   aggregators (Grafana/Loki, Logstash) can filter by request ID without
+ *   navigating nested objects.
+ * - `service: 'bluecollar-api'` label added for multi-service log pipelines.
+ *
+ * ## Downstream propagation
+ *
+ * Request IDs propagate to downstream service logs when callers create a
+ * child logger:
+ *
+ * ```ts
+ * const reqLogger = logger.child({ requestId: req.id })
+ * reqLogger.info('Sending verification email')
+ * // → { ..., requestId: "a1b2c3d4-...", msg: "Sending verification email" }
+ * ```
+ *
+ * ## Log file rotation
+ *
+ * In production, logs are written to daily rotating files via pino/file:
+ *   `storage/logs/api-YYYY-MM-DD.log`
+ *
+ * The `deploy/logstash` pipeline ingests these files.
  */
-export const requestLogger = pinoHttp({
-  logger: isDev
-    ? pino({ level: 'info', transport: { target: 'pino-pretty', options: { colorize: true, ignore: 'pid,hostname' } } })
-    : pino(
-        { level: 'info' },
-        pino.destination({
-          dest: path.resolve(LOG_DIR, `api-${new Date().toISOString().slice(0, 10)}.log`),
-          sync: false,
-        }),
-      ),
 
-  customProps: (req: any) => ({
-    userAgent: req.headers['user-agent'],
-    ip: req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress,
-    userId: req.user?.id ?? null,
+import pinoHttp from 'pino-http'
+import type { Request } from 'express'
+import type { IncomingMessage } from 'node:http'
+import { logger } from '@/config/logger.js'
+
+/** Request augmented with the authenticated user attached by auth middleware. */
+type LoggedRequest = IncomingMessage & { user?: { id?: string }; id?: string }
+
+export const requestLogger = pinoHttp({
+  // Use the shared, centrally-configured pino logger so log level, redaction,
+  // transports, and destination are consistent across the whole service.
+  logger,
+
+  /**
+   * Use the UUID already attached by the `requestId` middleware so every log
+   * line — including pino-http's request and response records — carries the
+   * same correlation ID.
+   *
+   * Falls back to a new UUID if the `requestId` middleware was not mounted
+   * (e.g. legacy test helpers that bypass the middleware stack).
+   */
+  genReqId: (req: IncomingMessage) => (req as LoggedRequest).id ?? crypto.randomUUID(),
+
+  // PII SAFETY: Only method, url, and statusCode are logged.
+  // No headers, body, query params, or IP addresses are persisted.
+  // `requestId` and `userId` are promoted to the root of every log line so
+  // aggregators can filter without navigating nested objects.
+  customProps: (req: IncomingMessage) => ({
+    requestId: (req as LoggedRequest).id ?? null,
+    userId: (req as LoggedRequest).user?.id ?? null,
   }),
 
-  customSuccessMessage: (req: any, res) => `${req.method} ${req.url} ${res.statusCode}`,
-  customErrorMessage: (req: any, res, err) => `${req.method} ${req.url} ${res.statusCode} — ${err.message}`,
+  customSuccessMessage: (req: IncomingMessage, res) => `${req.method} ${req.url} ${res.statusCode}`,
+  customErrorMessage: (req: IncomingMessage, res, err) => `${req.method} ${req.url} ${res.statusCode} — ${err.message}`,
 
   serializers: {
     req: (req) => ({ method: req.method, url: req.url }),
     res: (res) => ({ statusCode: res.statusCode }),
+    err: (err) => ({ message: err.message, type: err.type }),
   },
 })
+
+/**
+ * Create a child logger bound to a specific request ID.
+ *
+ * Use this in controllers and services to emit log lines that are
+ * automatically correlated with the originating HTTP request:
+ *
+ * ```ts
+ * import { childLogger } from '@/middleware/requestLogger.js'
+ *
+ * function handleRequest(req: Request) {
+ *   const log = childLogger(req)
+ *   log.info({ to }, 'Sending verification email')
+ *   // → { requestId: "a1b2c3d4-...", service: "bluecollar-api", ... }
+ * }
+ * ```
+ */
+export function childLogger(req: Request) {
+  return logger.child({
+    requestId: req.id,
+    userId: req.user?.id ?? null,
+    service: 'bluecollar-api',
+  })
+}

@@ -1,16 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import Image from "next/image";
 import { X, BadgeCheck, MapPin, Star } from "lucide-react";
 import { useCompare } from "@/context/CompareContext";
-import type { Worker } from "@/types";
+import type { Worker } from "@bluecollar/types";
+import { useTranslations } from "next-intl";
+import { routes } from "@/lib/routes";
 
 function Cell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-4 py-3 text-sm text-gray-700 border-b ${className}`}>{children}</td>;
 }
 
+const TITLE_ID = "compare-drawer-title";
+
 function Rating({ value }: { value?: number | null }) {
-  if (value == null) return <span className="text-gray-400">&mdash;</span>;
+  const t = useTranslations("componentText");
+  if (value == null) return <span className="text-gray-400">{t("notAvailable")}</span>;
   return (
     <span className="flex items-center gap-1">
       <Star size={13} className="fill-yellow-400 text-yellow-400" aria-hidden="true" />
@@ -20,57 +26,20 @@ function Rating({ value }: { value?: number | null }) {
 }
 
 export default function CompareDrawer() {
+  const t = useTranslations("componentText");
+  const workerCardT = useTranslations("workerCard");
   const { selected, remove, clear } = useCompare();
   const [open, setOpen] = useState(false);
-  const modalRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setOpen(false);
-    }
-    if (e.key === "Tab" && modalRef.current) {
-      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last?.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first?.focus();
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open) {
-      document.addEventListener("keydown", handleKeyDown);
-      modalRef.current?.focus();
-      document.body.style.overflow = "hidden";
-    }
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
-    };
-  }, [open, handleKeyDown]);
-
-  const handleClose = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
 
   if (selected.length === 0) return null;
 
   const rows: { label: string; render: (w: Worker) => React.ReactNode }[] = [
-    { label: "Category", render: (w) => w.category.name },
-    { label: "Rating", render: (w) => <Rating value={w.averageRating} /> },
-    { label: "Reviews", render: (w) => w.reviewCount ?? "\u2014" },
-    { label: "Location", render: (w) => w.location ? <span className="flex items-center gap-1"><MapPin size={12} aria-hidden="true" />{w.location}</span> : "\u2014" },
-    { label: "Verified", render: (w) => w.isVerified ? <BadgeCheck size={16} className="text-blue-500" aria-label="Verified" /> : "\u2014" },
-    { label: "Contact", render: (w) => w.email ?? w.phone ?? "\u2014" },
+    { label: t("category"), render: (w) => w.category.name },
+    { label: t("rating"), render: (w) => <Rating value={w.averageRating} /> },
+    { label: t("reviews"), render: (w) => w.reviewCount ?? t("notAvailable") },
+    { label: t("location"), render: (w) => w.location ? <span className="flex items-center gap-1"><MapPin size={12} aria-hidden="true" />{w.location}</span> : t("notAvailable") },
+    { label: t("verified"), render: (w) => w.isVerified ? <BadgeCheck size={16} className="text-blue-500" aria-label={t("verified")} /> : t("notAvailable") },
+    { label: t("contact"), render: (w) => w.email ?? w.phone ?? t("notAvailable") },
   ];
 
   return (
@@ -80,98 +49,94 @@ export default function CompareDrawer() {
           {selected.map((w) => (
             <span key={w.id} className="flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700">
               {w.name}
-              <button onClick={() => remove(w.id)} aria-label={`Remove ${w.name} from comparison`} className="rounded-full p-0.5 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+              <button onClick={() => remove(w.id)} aria-label={t("removeFromComparison", { name: w.name })} className="rounded-full p-0.5 hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                 <X size={13} aria-hidden="true" />
               </button>
             </span>
           ))}
         </div>
         <button onClick={clear} className="text-xs text-gray-500 hover:text-gray-700 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-2 py-1">
-          Clear all
+          {t("clearAll")}
         </button>
         <button
-          ref={triggerRef}
           onClick={() => setOpen(true)}
           className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-          aria-expanded={open}
-          aria-controls="compare-modal"
         >
-          Compare ({selected.length})
+          {t("compareWorkers", { count: selected.length })}
         </button>
       </div>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Content
           role="dialog"
           aria-modal="true"
-          aria-labelledby="compare-modal-title"
-          id="compare-modal"
+          aria-labelledby={TITLE_ID}
+          className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-4xl max-h-[90vh] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl bg-white shadow-xl outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <div
-            ref={modalRef}
-            tabIndex={-1}
-            className="relative w-full max-w-4xl max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-xl outline-none"
-          >
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 id="compare-modal-title" className="text-lg font-semibold text-gray-900">
-                Compare Workers
-              </h2>
-              <button onClick={handleClose} aria-label="Close comparison" className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
-                <X size={20} aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="overflow-x-auto p-4">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-28 border-b" scope="col" />
-                    {selected.map((w) => (
-                      <th key={w.id} className="px-4 py-3 border-b" scope="col">
-                        <div className="flex flex-col items-center gap-1">
-                          {w.avatar ? (
-                            <img src={w.avatar} alt="" className="h-12 w-12 rounded-full object-cover ring-2 ring-blue-100" aria-hidden="true" />
-                          ) : (
-                            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-blue-600 font-bold" aria-hidden="true">
-                              {w.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()}
-                            </div>
-                          )}
-                          <span className="text-sm font-semibold text-gray-800">{w.name}</span>
-                          <button onClick={() => { remove(w.id); }} aria-label={`Remove ${w.name} from comparison`} className="text-xs text-gray-400 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1">
-                            Remove
-                          </button>
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(({ label, render }) => (
-                    <tr key={label}>
-                      <td className="px-4 py-3 text-xs font-medium text-gray-500 uppercase border-b">{label}</td>
-                      {selected.map((w) => <Cell key={w.id}>{render(w)}</Cell>)}
-                    </tr>
-                  ))}
-                  <tr>
-                    <td className="px-4 py-3 border-b" />
-                    {selected.map((w) => (
-                      <td key={w.id} className="px-4 py-3 border-b">
-                        <a
-                          href={`/workers/${w.id}`}
-                          className="block rounded-md bg-blue-600 py-1.5 text-center text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                        >
-                          View Profile
-                        </a>
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <Dialog.Title id={TITLE_ID} className="text-lg font-semibold text-gray-900">
+              {t("compareWorkersTitle")}
+            </Dialog.Title>
+            <Dialog.Close aria-label={t("closeComparison")} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+              <X size={20} aria-hidden="true" />
+            </Dialog.Close>
           </div>
-        </div>
-      )}
+
+          <div className="overflow-x-auto p-4">
+            <table className="w-full border-collapse">
+              <caption className="sr-only">{t("compareWorkersTitle")}</caption>
+              <thead>
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase w-28 border-b" scope="col">
+                    <span className="sr-only">{t("compareWorkersTitle")}</span>
+                  </th>
+                  {selected.map((w) => (
+                    <th key={w.id} className="px-4 py-3 border-b" scope="col" aria-label={w.name}>
+                      <div className="flex flex-col items-center gap-1">
+                        {w.avatar ? (
+                          <Image src={w.avatar} alt="" width={48} height={48} sizes="48px" loading="lazy" className="h-12 w-12 rounded-full object-cover ring-2 ring-blue-100" aria-hidden="true" />
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100 text-blue-600 font-bold" aria-hidden="true">
+                            {w.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase()}
+                          </div>
+                        )}
+                        <span className="text-sm font-semibold text-gray-800">{w.name}</span>
+                        <button onClick={() => { remove(w.id); }} aria-label={t("removeFromComparison", { name: w.name })} className="text-xs text-gray-400 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1">
+                          {t("remove")}
+                        </button>
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ label, render }) => (
+                  <tr key={label}>
+                    <th scope="row" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase border-b">{label}</th>
+                    {selected.map((w) => <Cell key={w.id}>{render(w)}</Cell>)}
+                  </tr>
+                ))}
+                <tr>
+                  <td className="px-4 py-3 border-b">
+                    <span className="sr-only">{workerCardT("viewProfile")}</span>
+                  </td>
+                  {selected.map((w) => (
+                    <td key={w.id} className="px-4 py-3 border-b">
+                      <a
+                        href={`/workers/${w.id}`}
+                        aria-label={`${workerCardT("viewProfile")}: ${w.name}`}
+                        className="block rounded-md bg-blue-600 py-1.5 text-center text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                      >
+                        {workerCardT("viewProfile")}
+                      </a>
+                    </td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+      </Modal>
     </>
   );
 }
